@@ -7,6 +7,10 @@ I18n.extend({
     toggleEye: 'Показать пароль',
     secure: 'Защищённое подключение',
     note: 'Личный кабинет пока в разработке.',
+    empty: 'Введите логин и пароль.',
+    wrong: 'Неверный логин или пароль.',
+    blocked: 'Учётная запись заблокирована. Обратитесь к администратору.',
+    welcome: 'Добро пожаловать! Открываем систему…',
     salesTitle: 'Продажи', salesSub: 'CRM, заказы, клиенты',
     financeTitle: 'Финансы', financeSub: 'Касса, банк, отчёты',
     warehouseTitle: 'Склад', warehouseSub: 'Остатки, перемещения',
@@ -19,6 +23,10 @@ I18n.extend({
     toggleEye: 'Parolni ko’rsatish',
     secure: 'Himoyalangan ulanish',
     note: 'Shaxsiy kabinet hali ishlab chiqilmoqda.',
+    empty: 'Login va parolni kiriting.',
+    wrong: 'Login yoki parol noto‘g‘ri.',
+    blocked: 'Hisob bloklangan. Administratorga murojaat qiling.',
+    welcome: 'Xush kelibsiz! Tizim ochilmoqda…',
     salesTitle: 'Savdo', salesSub: 'CRM, buyurtmalar, mijozlar',
     financeTitle: 'Moliya', financeSub: 'Kassa, bank, hisobotlar',
     warehouseTitle: 'Ombor', warehouseSub: 'Qoldiqlar, ko’chirishlar',
@@ -37,11 +45,14 @@ I18n.extend({
 
   var noteKey = null; // какой текст сейчас показан в note (для перевода при смене языка)
 
-  // Показать жёлтое предупреждение под кнопкой (анимация перезапускается при каждом показе)
-  function showNote(key) {
+  var OK_ICON = '<svg width="16" height="16" viewBox="0 0 24 24"><circle cx="12" cy="12" r="11" fill="currentColor"/><path d="m7 12.5 3.2 3.2L17 9" fill="none" stroke="#04140c" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+  // Показать сообщение под кнопкой (анимация перезапускается при каждом показе)
+  function showNote(key, ok) {
     noteKey = key;
-    note.innerHTML = WARN_ICON + '<span>' + I18n.t(key) + '</span>';
-    note.classList.add('i18n-fade', 'i18n-extra'); // теперь note тоже плавно гаснет при смене языка
+    note.innerHTML = (ok ? OK_ICON : WARN_ICON) + '<span>' + I18n.t(key) + '</span>';
+    note.classList.add('i18n-fade', 'i18n-extra'); // note тоже плавно гаснет при смене языка
+    note.classList.toggle('note-ok', !!ok);
     note.classList.remove('note-warn');
     void note.offsetWidth; // перезапуск CSS-анимации
     note.classList.add('note-warn');
@@ -51,10 +62,21 @@ I18n.extend({
     if (noteKey) note.querySelector('span').textContent = I18n.t(noteKey);
   });
 
+  // Вход: проверка логина и пароля (в демо — по хэшу в данных браузера), затем переход в систему
+  var busy = false;
   form.addEventListener('submit', function (e) {
     e.preventDefault();
-    // Кабинета пока нет — как в оригинале, данные никуда не отправляются
-    showNote('note');
+    if (busy) return;
+    var login = document.getElementById('loginName').value.trim();
+    if (!login || !pass.value) { showNote('empty'); return; }
+    busy = true;
+    SM.load();
+    SM.login(login, pass.value).then(function (res) {
+      if (!res.ok) { busy = false; showNote(res.error === 'blocked' ? 'blocked' : 'wrong'); form.classList.remove('shake'); void form.offsetWidth; form.classList.add('shake'); return; }
+      showNote('welcome', true);
+      document.body.classList.add('leaving');
+      setTimeout(function () { location.href = 'admin.html'; }, 650);
+    });
   });
 
   eye.addEventListener('click', function () {

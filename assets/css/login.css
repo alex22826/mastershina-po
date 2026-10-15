@@ -169,6 +169,13 @@
   animation: note-in .35s var(--ease-out) forwards;
 }
 .login-card .note.note-warn svg { flex-shrink: 0; }
+.login-card .note.note-ok { color: #3ddc97; }
+/* неверный пароль — форма «встряхивается» */
+.login-card.shake { animation: shake .42s cubic-bezier(.36, .07, .19, .97) both; }
+@keyframes shake { 10%, 90% { transform: translateX(-1px); } 20%, 80% { transform: translateX(3px); } 30%, 50%, 70% { transform: translateX(-6px); } 40%, 60% { transform: translateX(6px); } }
+/* успешный вход — страница плавно гаснет перед переходом в систему */
+body.leaving .form-inner { transition: opacity .55s ease, transform .55s ease; opacity: 0; transform: translateY(-10px) scale(.98); }
+body.leaving .video-wrap { transition: filter .6s ease; filter: brightness(.4); }
 
 /* --- Карточки разделов системы --- */
 .feature-grid {

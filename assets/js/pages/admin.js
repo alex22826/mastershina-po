@@ -1,0 +1,185 @@
+/* =========================================================
+   Пользователи и роли (ТЗ 3), справочники (6, 10, 11, 14, 15, 19),
+   история операций (21), уведомления (20)
+   ========================================================= */
+(function () {
+  'use strict';
+  const SM = window.SM, UI = SM.ui;
+  const { html, raw, fmt: F, d: D } = SM;
+  const I = UI.icon;
+
+  /* ---------- Пользователи ---------- */
+  function userForm(u) {
+    const isNew = !u;
+    u = u || { role: 'seller', points: [], active: true };
+    const m = UI.modal({ title: isNew ? 'Новый пользователь' : u.name, sub: isNew ? 'Логин и пароль сотрудник вводит на странице входа' : 'Логин: ' + u.login, size: 'wide',
+      body: html`<form class="form-grid" autocomplete="off">
+        <div class="field"><label>Ф.И.О. <span class="req">*</span></label><input class="input" name="name" value="${u.name || ''}" autofocus></div>
+        <div class="field"><label>Телефон</label><input class="input" name="phone" value="${u.phone || ''}"></div>
+        <div class="field"><label>Логин <span class="req">*</span></label><input class="input" name="login" value="${u.login || ''}" ${isNew ? '' : 'readonly'} autocomplete="off"></div>
+        <div class="field"><label>${isNew ? 'Пароль' : 'Новый пароль'} ${isNew ? html`<span class="req">*</span>` : ''}</label><input class="input" type="password" name="pass" autocomplete="new-password" placeholder="${isNew ? 'не короче 6 символов' : 'оставьте пустым, чтобы не менять'}"></div>
+        <div class="field full"><label>Роль</label><select class="select" name="role">${UI.options(Object.entries(SM.ROLES).map(([k, v]) => [k, v.title + ' — ' + v.desc]), u.role)}</select></div>
+        <div class="field full"><label>Доступные магазины и склады</label><div class="choice">${SM.db.points.map((p) => html`<label><input type="checkbox" name="pt_${p.id}" ${u.points.includes(p.id) ? 'checked' : ''}><span>${I(p.type === 'warehouse' ? 'warehouse' : 'store')}${p.name}</span></label>`)}</div><span class="hint">Для склада и продавцов: видят и работают только с выбранными точками. Пусто — все точки.</span></div>
+        <label class="switch full"><input type="checkbox" name="active" ${u.active ? 'checked' : ''}><i></i>Учётная запись активна</label></form>`,
+      foot: html`<button class="btn btn-ghost" data-close>Отмена</button><button class="btn btn-primary" data-ok>${I('check')}Сохранить</button>` });
+    const f = m.querySelector('form');
+    m.querySelector('[data-ok]').onclick = async () => {
+      const d = UI.formData(f);
+      if (!d.name) return UI.invalid(f, 'name', 'Укажите Ф.И.О.');
+      if (isNew && !/^[a-z0-9._-]{3,}$/i.test(d.login)) return UI.invalid(f, 'login', 'Латиница и цифры, не короче 3 символов');
+      if (isNew && SM.db.users.some((x) => x.login.toLowerCase() === d.login.toLowerCase())) return UI.invalid(f, 'login', 'Такой логин уже есть');
+      if ((isNew || d.pass) && String(d.pass).length < 6) return UI.invalid(f, 'pass', 'Пароль не короче 6 символов');
+      if (u.id === SM.user.id && !d.active) return UI.toast('Нельзя заблокировать себя', '', 'warn');
+      const points = SM.db.points.filter((p) => d['pt_' + p.id]).map((p) => p.id);
+      const x = isNew ? { id: SM.uid('u'), login: d.login.toLowerCase(), createdAt: new Date().toISOString(), lastLogin: null } : u;
+      Object.assign(x, { name: d.name, phone: d.phone, role: d.role, points, active: !!d.active });
+      if (d.pass) x.passHash = await SM.passHash(x.login, d.pass);
+      if (isNew) SM.db.users.push(x);
+      SM.log(isNew ? 'Создан пользователь' : 'Изменён пользователь', 'user', x.id, x.name + ' · ' + SM.ROLES[x.role].title + (d.pass && !isNew ? ' · пароль изменён' : ''));
+      SM.save(); UI.closeTop(); UI.toast('Сохранено', x.name); SM.refresh();
+    };
+  }
+  function usersPage(r) {
+    const tab = r.q.tab || 'users';
+    const edit = SM.can('users', 2);
+    if (tab === 'roles') {
+      const roles = SM.db.roles;
+      const keys = Object.keys(SM.ROLES);
+      return html`
+        ${UI.pageHead('Пользователи и роли', 'Права доступа по ролям. Окончательный перечень ролей и прав согласовывается перед началом разработки (ТЗ 3)', edit ? html`<button class="btn btn-ghost" data-x="reset-roles">${I('undo')}Как в ТЗ</button><button class="btn btn-primary" data-x="save-roles">${I('check')}Сохранить права</button>` : '')}
+        ${UI.tabs([['users', 'Пользователи', SM.db.users.length], ['roles', 'Роли и права']], tab)}
+        <div class="card"><div class="card-h"><h3>${I('shield')}Доступ к разделам</h3><span class="sub">0 — нет, 1 — просмотр, 2 — изменение, 3 — полный</span></div><div class="card-b"><div class="table-wrap"><table class="table compact no-stack perm" id="perm"><thead><tr><th>Раздел</th>${keys.map((k) => html`<th class="c">${SM.ROLES[k].title}</th>`)}</tr></thead><tbody>
+          ${SM.SECTIONS.map((s) => html`<tr><td class="fw-7">${s.title}<span class="cell-sub">${s.group}</span></td>${keys.map((k) => html`<td class="c"><select class="select input-sm" data-role="${k}" data-sec="${s.key}" ${edit && k !== 'admin' ? '' : 'disabled'} aria-label="${SM.ROLES[k].title}: ${s.title}">${UI.options(SM.LEVELS.map((t, i) => [i, i + ' · ' + t]), roles[k].perms[s.key] || 0)}</select></td>`)}</tr>`)}</tbody></table></div></div></div>
+        <div class="grid g-2 mt-16">
+          <div class="card"><div class="card-h"><h3>${I('key')}Права на действия</h3></div><div class="card-b"><div class="table-wrap"><table class="table compact no-stack"><thead><tr><th>Право</th>${keys.map((k) => html`<th class="c">${SM.ROLES[k].title.split(' ')[0]}</th>`)}</tr></thead><tbody>
+            ${SM.FLAGS.map((fl) => html`<tr><td><span class="cell-title fw-7">${fl.title}</span><span class="cell-sub">${fl.hint}</span></td>${keys.map((k) => html`<td class="c"><label class="check"><input type="checkbox" data-frole="${k}" data-flag="${fl.key}" ${roles[k].flags[fl.key] ? 'checked' : ''} ${edit && k !== 'admin' ? '' : 'disabled'}></label></td>`)}</tr>`)}</tbody></table></div></div></div>
+          <div class="card"><div class="card-h"><h3>${I('percent')}Скидки по ролям</h3><span class="sub">ТЗ 9.3: право на скидку настраивается по ролям</span></div><div class="card-b"><div class="stack" style="gap:10px">
+            ${keys.map((k) => html`<div class="row nowrap"><span class="grow fw-7">${SM.ROLES[k].title}</span><div class="input-suffix" style="width:130px"><input class="input input-sm num" type="number" min="0" max="100" data-disc="${k}" value="${roles[k].discountMax || 0}" ${edit && k !== 'admin' ? '' : 'disabled'}><em>%</em></div></div>`)}</div></div></div>
+        </div>`;
+    }
+    const roleBadge = (k) => html`<span class="badge ${{ admin: 'b-accent', head: 'b-violet', seller: 'b-info', storekeeper: 'b-warn', accountant: 'b-ok', courier: 'b-slate' }[k]} no-dot">${SM.ROLES[k].title}</span>`;
+    return html`
+      ${UI.pageHead('Пользователи и роли', 'Создание и блокировка пользователей, назначение ролей и доступных точек', edit ? html`<button class="btn btn-primary" data-x="new">${I('plus')}Пользователь</button>` : '')}
+      ${UI.tabs([['users', 'Пользователи', SM.db.users.length], ['roles', 'Роли и права']], tab)}
+      <div class="grid g-3 mb-16 stagger">${Object.entries(SM.ROLES).map(([k, v]) => html`<div class="card kpi"><div class="k-label">${I('shield')}${v.title}</div><div class="k-value">${SM.db.users.filter((u) => u.role === k).length}</div><div class="k-foot">${v.desc}</div></div>`)}</div>
+      <div class="card"><div class="card-b"><div class="table-wrap"><table class="table"><thead><tr><th>Сотрудник</th><th>Логин</th><th>Роль</th><th>Точки</th><th>Последний вход</th><th>Статус</th><th></th></tr></thead><tbody>
+        ${SM.db.users.map((u) => html`<tr class="${u.active ? '' : 'row-muted'}"><td><div class="row nowrap">${UI.avatar(u.name, u.id, 'sm')}<div><span class="cell-title">${u.name}</span><span class="cell-sub">${u.phone || ''}</span></div></div></td><td class="mono">${u.login}</td><td>${roleBadge(u.role)}</td>
+          <td class="fs-12">${u.points.length ? u.points.map((p) => SM.point(p).name).join(', ') : html`<span class="muted">все</span>`}</td><td class="nowrap">${u.lastLogin ? F.ago(u.lastLogin) : html`<span class="muted">не входил</span>`}</td>
+          <td>${u.active ? html`<span class="badge b-ok">активен</span>` : html`<span class="badge b-bad">заблокирован</span>`}</td>
+          <td class="r nowrap">${edit ? html`<button class="btn btn-ghost btn-sm" data-edit="${u.id}">${I('edit')}</button>${u.id !== SM.user.id ? html`<button class="btn btn-ghost btn-sm" data-block="${u.id}">${u.active ? 'Заблокировать' : 'Разблокировать'}</button>` : ''}` : ''}</td></tr>`)}</tbody></table></div></div></div>`;
+  }
+
+  /* ---------- Справочники ---------- */
+  const REF_TABS = [['points', 'Магазины и склады'], ['methods', 'Способы оплаты'], ['cats', 'Категории товаров'], ['exp', 'Категории расходов'], ['cars', 'Водители и автомобили'], ['company', 'Реквизиты'], ['site', 'Интеграция с сайтом'], ['demo', 'Демо-данные']];
+  function simpleForm(title, fields, onSave) {
+    const m = UI.modal({ title, size: 'narrow', body: html`<form class="stack" style="gap:12px" autocomplete="off">${fields.map((f) => f.options ? html`<div class="field"><label>${f.label}</label><select class="select" name="${f.name}">${UI.options(f.options, f.value)}</select></div>` : f.check ? html`<label class="switch"><input type="checkbox" name="${f.name}" ${f.value ? 'checked' : ''}><i></i>${f.label}</label>` : html`<div class="field"><label>${f.label}${f.req ? html` <span class="req">*</span>` : ''}</label><input class="input" name="${f.name}" value="${f.value || ''}" ${f.req ? raw('data-req="1"') : ''}></div>`)}</form>`,
+      foot: html`<button class="btn btn-ghost" data-close>Отмена</button><button class="btn btn-primary" data-ok>${I('check')}Сохранить</button>` });
+    const f = m.querySelector('form');
+    const first = f.querySelector('input:not([type=checkbox])'); if (first) first.setAttribute('autofocus', '');
+    m.querySelector('[data-ok]').onclick = () => { const d = UI.formData(f); const miss = UI.$$('[data-req]', f).find((x) => !x.value.trim()); if (miss) return UI.invalid(f, miss.name, 'Обязательное поле'); onSave(d); SM.save(); UI.closeTop(); UI.toast('Сохранено'); SM.refresh(); };
+  }
+  function refsPage(r) {
+    const tab = r.q.tab || 'points';
+    const edit = SM.can('refs', 2);
+    let body;
+    if (tab === 'points') body = html`<div class="row mb-16"><span class="muted fs-13">Без жёсткого ограничения количества · на запуске ожидается 10–15 точек (ТЗ 6)</span>${edit ? html`<button class="btn btn-primary right" data-x="add-point">${I('plus')}Точка</button>` : ''}</div>
+      <div class="table-wrap"><table class="table"><thead><tr><th>Название</th><th>Тип</th><th>Адрес</th><th class="r">Товаров, ед.</th><th>Статус</th><th></th></tr></thead><tbody>${SM.db.points.map((p) => html`<tr class="${p.active ? '' : 'row-muted'}"><td><span class="cell-title">${p.name}</span><span class="cell-sub">${p.phone || ''}</span></td><td>${p.type === 'warehouse' ? 'Склад' : 'Магазин'}</td><td>${p.address}</td><td class="r">${SM.db.products.reduce((a, x) => a + Math.max(0, SM.qty(x.id, p.id)), 0)}</td><td>${p.active ? html`<span class="badge b-ok">работает</span>` : html`<span class="badge b-bad">отключена</span>`}</td><td class="r">${edit ? html`<button class="btn btn-ghost btn-sm" data-point="${p.id}">${I('edit')}</button>` : ''}</td></tr>`)}</tbody></table></div>`;
+    else if (tab === 'methods') body = html`<div class="row mb-16"><span class="muted fs-13">Курс $ для пересчёта берётся по типу курса способа</span>${edit ? html`<button class="btn btn-primary right" data-x="add-method">${I('plus')}Способ оплаты</button>` : ''}</div>
+      <ul class="list">${SM.db.methods.map((m) => html`<li><span class="note-ic accent">${I(m.icon || 'wallet')}</span><div class="grow"><b class="fs-13">${m.name}</b><div class="fs-12 muted">${m.cur === 'USD' ? 'в долларах' : 'в сумах'} · курс: ${SM.RATE_TYPES[m.rate]}</div></div><label class="switch"><input type="checkbox" data-method="${m.id}" ${m.active ? 'checked' : ''} ${edit ? '' : 'disabled'}><i></i></label></li>`)}</ul>`;
+    else if (tab === 'cats') body = html`<div class="row mb-16">${edit ? html`<button class="btn btn-primary" data-x="add-cat">${I('plus')}Категория</button>` : ''}</div>
+      <div class="grid g-3">${SM.db.categories.filter((c) => !c.parent).map((c) => html`<div class="cash-acc"><span>${I('tag')}${SM.db.products.filter((p) => SM.catRoot(p.cat).id === c.id).length} товаров</span><b class="fs-15">${c.name}</b><div class="attrs mt-8">${SM.db.categories.filter((s) => s.parent === c.id).map((s) => html`<span class="chip">${s.name}</span>`)}</div></div>`)}</div>`;
+    else if (tab === 'exp') body = html`<div class="row mb-16">${edit ? html`<button class="btn btn-primary" data-x="add-exp">${I('plus')}Категория расходов</button>` : ''}</div><ul class="list">${SM.db.expCats.map((c) => html`<li><span class="note-ic">${I('coins')}</span><div class="grow"><b class="fs-13">${c.name}</b></div><span class="muted fs-12">${SM.db.expenses.filter((e) => e.cat === c.id).length} операций</span></li>`)}</ul>`;
+    else if (tab === 'cars') body = html`<div class="grid g-2"><div><div class="row mb-12"><h3>Водители</h3>${edit ? html`<button class="btn btn-secondary btn-sm right" data-x="add-driver">${I('plus')}Водитель</button>` : ''}</div><ul class="list">${SM.db.drivers.map((d) => html`<li>${UI.avatar(d.name, d.id, 'sm')}<div class="grow"><b class="fs-13">${d.name}</b><div class="fs-12 muted">${d.phone}</div></div><span class="muted fs-12">${SM.db.deliveries.filter((x) => x.driverId === d.id).length} доставок</span></li>`)}</ul></div>
+      <div><div class="row mb-12"><h3>Автомобили</h3>${edit ? html`<button class="btn btn-secondary btn-sm right" data-x="add-car">${I('plus')}Автомобиль</button>` : ''}</div><ul class="list">${SM.db.cars.map((c) => html`<li><span class="note-ic info">${I('truck')}</span><div class="grow"><b class="fs-13">${c.model}</b><div class="fs-12 muted mono">${c.plate}</div></div><span class="muted fs-12">${SM.db.expenses.filter((e) => e.car === c.id && !e.cancelled).length} расходов</span></li>`)}</ul></div></div>`;
+    else if (tab === 'company') { const co = SM.db.settings.company; body = html`<form class="form-grid" id="coForm" autocomplete="off">${[['name', 'Название'], ['inn', 'ИНН'], ['address', 'Адрес'], ['phone', 'Телефон'], ['bank', 'Банк'], ['mfo', 'МФО'], ['account', 'Расчётный счёт'], ['director', 'Директор'], ['accountant', 'Главный бухгалтер']].map(([k, t]) => html`<div class="field ${k === 'address' || k === 'name' ? 'full' : ''}"><label>${t}</label><input class="input" name="${k}" value="${co[k] || ''}" ${edit ? '' : 'readonly'}></div>`)}${edit ? html`<div class="full"><button class="btn btn-primary" type="submit">${I('check')}Сохранить реквизиты</button><span class="muted fs-12" style="margin-left:10px">Подставляются во все документы автоматически</span></div>` : ''}</form>`; }
+    else if (tab === 'site') { const site = SM.db.settings.site; const n = SM.db.sales.filter((s) => s.source === 'site').length; body = html`<div class="grid g-2"><div class="stack">
+        <div class="note-box warn">${I('info')}<div>По ТЗ (п. 19) точный перечень передаваемых данных, последовательность обработки заказов и этап реализации согласовываются отдельно при проектировании.</div></div>
+        <dl class="dl"><dt>Сайт</dt><dd>${site.url}</dd><dt>Статус</dt><dd>${site.connected ? html`<span class="badge b-ok">подключён</span>` : html`<span class="badge b-warn">не подключён</span>`}</dd><dt>Заказов с сайта</dt><dd>${n}</dd></dl></div>
+        <div class="card"><div class="card-b"><div class="section-t">Как будет работать</div><ul class="timeline"><li class="on"><b>Клиент оформляет заказ на сайте</b><small>товары, контакты, способ оплаты и доставки</small></li><li><b>Заказ появляется в «Продажах» с меткой «сайт»</b><small>продавец получает уведомление</small></li><li><b>Оплата уходит бухгалтеру на подтверждение</b><small>как обычная продажа</small></li><li><b>Остатки и цены передаются на сайт</b><small>периодичность — по согласованию</small></li></ul></div></div></div>`; }
+    else body = html`<div class="note-box">${I('info')}<div>Все данные демо хранятся в этом браузере (localStorage). В рабочей версии — сервер с базой данных, резервным копированием и одновременной работой сотрудников (ТЗ 22).</div></div>
+      <div class="row mt-16"><button class="btn btn-danger" data-x="reset">${I('undo')}Сбросить демо-данные</button><span class="muted fs-13">Вернёт 5 тестовых продаж и исходные остатки</span></div>
+      <div class="row mt-16"><a class="btn btn-secondary" href="styleguide.html" target="_blank" rel="noopener">${I('palette')}УИ-кит: стили, шрифты, кнопки, формы</a></div>`;
+    return html`${UI.pageHead('Справочники', 'Точки, способы оплаты, категории, водители и автомобили, реквизиты компании', '')}${UI.tabs(REF_TABS, tab)}<div class="card"><div class="card-b">${body}</div></div>`;
+  }
+
+  /* ---------- История операций ---------- */
+  const ENT = { sale: 'Продажа', payment: 'Оплата', receipt: 'Поступление', transfer: 'Перемещение', product: 'Товар', client: 'Контрагент', expense: 'Расход', delivery: 'Доставка', rate: 'Курс', user: 'Пользователь', doc: 'Документ', stock: 'Остатки', cash: 'Касса', settings: 'Настройки' };
+  function historyPage(r) {
+    const q = (r.q.q || '').toLowerCase(), u = r.q.u || '', e = r.q.e || '';
+    const R = SM.periodRange(r.q.p || 'all');
+    const list = SM.db.history.filter((h) => (!u || h.uid === u) && (!e || h.entity === e) && D.inRange(h.at, R.from, R.to) && (!q || (h.action + ' ' + h.detail + ' ' + h.uname).toLowerCase().includes(q))).slice().sort((a, b) => String(b.at).localeCompare(String(a.at)));
+    const link = (h) => ({ sale: '#/sales/', receipt: '#/receipts/', transfer: '#/transfers/', product: '#/products/', client: '#/clients/' }[h.entity] && h.entityId ? { sale: '#/sales/', receipt: '#/receipts/', transfer: '#/transfers/', product: '#/products/', client: '#/clients/' }[h.entity] + h.entityId : null);
+    return html`
+      ${UI.pageHead('История операций', 'Автор, дата и время, изменения, подтверждения оплат и отгрузок, отмены. Проведённое не удаляется — только отмена или корректировка (ТЗ 21)', html`<button class="btn btn-secondary" data-x="export">${I('download')}Excel</button>`)}
+      <div class="card"><div class="card-h">${UI.searchInput(r.q.q, 'Действие, документ, сотрудник')}${UI.filterSelect('u', u, SM.db.users.map((x) => [x.id, x.name]), 'Все сотрудники')}${UI.filterSelect('e', e, Object.entries(ENT), 'Все объекты')}<span class="right">${UI.periodSeg(r.q.p || 'all')}</span></div>
+        <div class="card-b" style="padding-top:12px">${list.length ? html`<div class="table-wrap"><table class="table compact"><thead><tr><th>Когда</th><th>Сотрудник</th><th>Действие</th><th>Объект</th><th>Подробности</th></tr></thead><tbody>
+          ${list.slice(0, 400).map((h) => { const l = link(h); return html`<tr ${l ? raw(`class="click" data-href="${l}"`) : ''}><td class="nowrap">${F.dt(h.at)}</td><td>${h.uid ? html`<div class="row nowrap">${UI.avatar(h.uname || '?', h.uid, 'sm')}<span class="fw-7">${h.uname}</span></div>` : html`<span class="muted">${h.uname || 'Система'}</span>`}</td><td class="fw-7">${h.action}</td><td>${ENT[h.entity] ? html`<span class="chip">${ENT[h.entity]}</span>` : ''}</td><td class="text-2">${h.detail}</td></tr>`; })}</tbody></table></div>` : UI.empty('Записей нет', '', 'history')}</div></div>`;
+  }
+
+  /* ---------- Уведомления ---------- */
+  function notificationsPage(r) {
+    const kind = r.q.k || '';
+    const list = SM.notesFor().filter((n) => !kind || n.kind === kind);
+    const un = SM.unread().length;
+    const groups = {};
+    list.forEach((n) => { const d = n.live ? 'Требует внимания' : D.dayOf(n.at) === D.todayISO() ? 'Сегодня' : D.dayOf(n.at) === D.iso(D.addDays(D.today(), -1)) ? 'Вчера' : F.date(n.at); (groups[d] = groups[d] || []).push(n); });
+    return html`
+      ${UI.pageHead('Уведомления', 'События вашей роли: продажи, оплаты на подтверждение, отгрузки, перемещения, доставка, отмены, долги и низкий остаток', un ? html`<button class="btn btn-secondary" data-x="read">${I('check')}Прочитать все (${un})</button>` : '')}
+      <div class="row mb-16">${UI.filterSelect('k', kind, Object.entries(SM.NOTE_KIND).map(([k, v]) => [k, v[2]]), 'Все события')}</div>
+      ${list.length ? Object.entries(groups).map(([g, ns]) => html`<div class="card mb-16"><div class="card-h"><h3>${g}</h3><span class="pill">${ns.length}</span></div><div class="card-b"><ul class="list">${ns.map(SM.noteRow)}</ul></div></div>`) : html`<div class="card"><div class="card-b">${UI.empty('Уведомлений нет', 'Всё спокойно', 'bell')}</div></div>`}`;
+  }
+
+  SM.page('users', {
+    title: 'Пользователи и роли', render: usersPage,
+    mount(el) {
+      UI.bindTabs(el);
+      const n = el.querySelector('[data-x=new]'); if (n) n.onclick = () => userForm(null);
+      UI.$$('[data-edit]', el).forEach((b) => (b.onclick = () => userForm(SM.db.users.find((u) => u.id === b.dataset.edit))));
+      UI.$$('[data-block]', el).forEach((b) => (b.onclick = async () => { const u = SM.db.users.find((x) => x.id === b.dataset.block); if (!(await UI.confirm(u.active ? 'Заблокировать ' + u.name + '?' : 'Разблокировать ' + u.name + '?', u.active ? 'Сотрудник не сможет войти в систему. История его операций сохранится.' : 'Сотрудник снова сможет войти.', { ok: u.active ? 'Заблокировать' : 'Разблокировать', danger: u.active }))) return; u.active = !u.active; SM.log(u.active ? 'Пользователь разблокирован' : 'Пользователь заблокирован', 'user', u.id, u.name); SM.save(); SM.refresh(); }));
+      const sv = el.querySelector('[data-x=save-roles]');
+      if (sv) sv.onclick = () => {
+        const roles = SM.db.roles;
+        UI.$$('select[data-role]', el).forEach((s) => (roles[s.dataset.role].perms[s.dataset.sec] = +s.value));
+        UI.$$('[data-frole]', el).forEach((c) => (roles[c.dataset.frole].flags[c.dataset.flag] = c.checked));
+        UI.$$('[data-disc]', el).forEach((i) => (roles[i.dataset.disc].discountMax = Math.max(0, Math.min(100, +i.value || 0))));
+        SM.log('Изменены права ролей', 'settings', null, ''); SM.save(); UI.toast('Права сохранены', 'Действуют сразу для всех пользователей роли'); SM.refresh();
+      };
+      const rs = el.querySelector('[data-x=reset-roles]');
+      if (rs) rs.onclick = async () => { if (!(await UI.confirm('Вернуть права как в ТЗ?', 'Все изменения прав по ролям будут сброшены.'))) return; SM.db.roles = JSON.parse(JSON.stringify(SM.ROLES)); SM.log('Права ролей сброшены к ТЗ', 'settings', null, ''); SM.save(); SM.refresh(); };
+    },
+  });
+  SM.page('refs', {
+    title: 'Справочники', render: refsPage,
+    mount(el) {
+      UI.bindTabs(el);
+      const on = (s, fn) => { const b = el.querySelector(s); if (b) b.onclick = fn; };
+      const pointForm = (p) => simpleForm(p ? p.name : 'Новая точка', [{ name: 'name', label: 'Название', value: p && p.name, req: true }, { name: 'type', label: 'Тип', options: [['shop', 'Магазин'], ['warehouse', 'Склад']], value: p ? p.type : 'shop' }, { name: 'address', label: 'Адрес', value: p && p.address, req: true }, { name: 'phone', label: 'Телефон', value: p && p.phone }, { name: 'active', label: 'Работает', check: true, value: p ? p.active : true }],
+        (d) => { if (p) Object.assign(p, d); else SM.db.points.push(Object.assign({ id: SM.uid('pt') }, d)); SM.log(p ? 'Изменена точка' : 'Добавлена точка', 'settings', null, d.name); });
+      on('[data-x=add-point]', () => pointForm(null));
+      UI.$$('[data-point]', el).forEach((b) => (b.onclick = () => pointForm(SM.db.points.find((p) => p.id === b.dataset.point))));
+      UI.$$('[data-method]', el).forEach((c) => (c.onchange = () => { const m = SM.db.methods.find((x) => x.id === c.dataset.method); m.active = c.checked; SM.log('Способ оплаты ' + (c.checked ? 'включён' : 'выключен'), 'settings', null, m.name); SM.save(); UI.toast(m.name, c.checked ? 'включён' : 'выключен'); }));
+      on('[data-x=add-method]', () => simpleForm('Новый способ оплаты', [{ name: 'name', label: 'Название', req: true }, { name: 'cur', label: 'Валюта', options: [['UZS', 'Сум'], ['USD', '$']], value: 'UZS' }, { name: 'rate', label: 'Курс для пересчёта', options: Object.entries(SM.RATE_TYPES), value: 'card' }], (d) => { SM.db.methods.push({ id: SM.uid('m'), name: d.name, cur: d.cur, rate: d.rate, icon: 'wallet', active: true }); SM.log('Добавлен способ оплаты', 'settings', null, d.name); }));
+      on('[data-x=add-cat]', () => simpleForm('Новая категория', [{ name: 'name', label: 'Название', req: true }, { name: 'parent', label: 'Входит в', options: [['', 'Верхний уровень']].concat(SM.db.categories.filter((c) => !c.parent).map((c) => [c.id, c.name])), value: '' }], (d) => { SM.db.categories.push({ id: SM.uid('c'), name: d.name, parent: d.parent || undefined }); SM.log('Добавлена категория', 'settings', null, d.name); }));
+      on('[data-x=add-exp]', () => simpleForm('Категория расходов', [{ name: 'name', label: 'Название', req: true }], (d) => { SM.db.expCats.push({ id: SM.uid('x'), name: d.name }); SM.log('Добавлена категория расходов', 'settings', null, d.name); }));
+      on('[data-x=add-driver]', () => simpleForm('Новый водитель', [{ name: 'name', label: 'Ф.И.О.', req: true }, { name: 'phone', label: 'Телефон', req: true }], (d) => { SM.db.drivers.push({ id: SM.uid('dr'), name: d.name, phone: d.phone, active: true }); SM.log('Добавлен водитель', 'settings', null, d.name); }));
+      on('[data-x=add-car]', () => simpleForm('Новый автомобиль', [{ name: 'model', label: 'Марка и модель', req: true }, { name: 'plate', label: 'Госномер', req: true }], (d) => { SM.db.cars.push({ id: SM.uid('car'), model: d.model, plate: d.plate.toUpperCase(), active: true }); SM.log('Добавлен автомобиль', 'settings', null, d.model + ' ' + d.plate); }));
+      const co = el.querySelector('#coForm');
+      if (co) co.onsubmit = (e) => { e.preventDefault(); Object.assign(SM.db.settings.company, UI.formData(co)); SM.log('Изменены реквизиты компании', 'settings', null, ''); SM.save(); UI.toast('Реквизиты сохранены'); };
+      on('[data-x=reset]', async () => { if (!(await UI.confirm('Сбросить демо-данные?', 'Все изменения в этом браузере будут удалены, вернутся исходные 5 продаж.', { ok: 'Сбросить', danger: true }))) return; const uid = SM.user.id; SM.resetDemo(); SM.user = SM.db.users.find((u) => u.id === uid) || SM.db.users[0]; UI.toast('Демо-данные сброшены'); SM.refresh(); });
+    },
+  });
+  SM.page('history', {
+    title: 'История операций', render: historyPage,
+    mount(el) {
+      UI.bindSearch(el); UI.bindFilters(el); UI.bindPeriod(el);
+      el.querySelector('[data-x=export]').onclick = () => UI.exportXLSX('История_операций_' + D.todayISO(), [['Дата и время', 'Сотрудник', 'Действие', 'Объект', 'Подробности'], ...SM.db.history.slice().reverse().map((h) => [F.dt(h.at), h.uname, h.action, ENT[h.entity] || h.entity, h.detail])], 'История');
+    },
+  });
+  SM.page('notifications', {
+    title: 'Уведомления', render: notificationsPage,
+    mount(el) {
+      UI.bindFilters(el);
+      const b = el.querySelector('[data-x=read]'); if (b) b.onclick = () => { SM.ops.markRead(); UI.toast('Все уведомления прочитаны'); SM.refresh(); };
+    },
+  });
+})();
