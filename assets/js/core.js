@@ -539,6 +539,21 @@
     if (!silent) SM.save();
     return pay;
   };
+  /* погашение долга клиента без выбора продажи (ТЗ 13): сумма разносится по его открытым продажам,
+     начиная со старой; остаток (долг из старой программы, аванс) — оплатой без привязки к продаже */
+  ops.repayDebt = function (clientId, p) {
+    const m = SM.method(p.method), rate = SM.rate(m.rate);
+    let left = +p.amount;
+    SM.db.sales.filter((s) => s.clientId === clientId && s.state === 'posted').sort((a, b) => String(a.date).localeCompare(String(b.date))).forEach((s) => {
+      const c = SM.saleCalc(s), open = c.debt - c.pending;
+      if (left < 0.005 || open <= c.eps) return;
+      const part = Math.min(left, Math.round(SM.conv(open, s.cur, m.cur, rate) * 100) / 100);
+      ops.addPayment(s, { method: p.method, amount: part, note: p.note }, true);
+      left -= part;
+    });
+    if (left >= 0.005) ops.addPayment(null, { method: p.method, amount: Math.round(left * 100) / 100, note: p.note, clientId }, true);
+    SM.save();
+  };
   ops.confirmPayment = function (id, ok, comment) {
     const p = SM.db.payments.find((x) => x.id === id);
     p.status = ok ? 'confirmed' : 'rejected';

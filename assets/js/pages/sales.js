@@ -355,7 +355,8 @@
     m.querySelector('[data-ok]').onclick = () => {
       const d = UI.formData(f);
       if (!(+d.amount > 0)) return UI.invalid(f, 'amount', 'Введите сумму');
-      SM.ops.addPayment(sale || null, { method: d.method, amount: +d.amount, note: d.note, clientId: cid, dir });
+      if (!sale && !out) SM.ops.repayDebt(cid, { method: d.method, amount: +d.amount, note: d.note });
+      else SM.ops.addPayment(sale || null, { method: d.method, amount: +d.amount, note: d.note, clientId: cid, dir });
       UI.closeTop(); UI.toast(SM.flag('confirmPay') ? 'Оплата проведена' : 'Оплата отправлена на проверку', F.cur(+d.amount, SM.method(d.method).cur)); SM.refresh();
     };
   };
