@@ -1,0 +1,222 @@
+/* ===== Страница входа: слева видео (60%), справа форма (40%) ===== */
+.page-login { overflow: hidden; }
+
+.banner {
+  position: relative; width: 100%;
+  height: 100vh; height: 100dvh;
+  overflow: hidden; background: var(--black); display: flex;
+}
+
+/* --- Видео-баннер --- */
+.video-wrap {
+  position: relative; width: 60%; height: 100%; overflow: hidden; flex-shrink: 0;
+  /* Запасной фон, пока нет видео: тёмная резина с бликом справа */
+  background: radial-gradient(120% 90% at 85% 55%, #232327 0%, #111114 38%, #050506 70%, #000 100%);
+}
+/* Псевдо-протектор из двух сеток канавок — виден, только если видео не загрузилось */
+.video-wrap::before {
+  content: ""; position: absolute; inset: -25%; z-index: 0;
+  background:
+    repeating-linear-gradient(118deg, transparent 0 44px, rgba(255,255,255,.05) 44px 46px, rgba(0,0,0,.75) 46px 54px),
+    repeating-linear-gradient(28deg, transparent 0 92px, rgba(255,255,255,.04) 92px 94px, rgba(0,0,0,.8) 94px 104px);
+  animation: tread-drift 18s ease-in-out infinite alternate;
+}
+@keyframes tread-drift { to { transform: translate(-60px, 90px); } }
+
+.banner video {
+  position: relative; z-index: 1;
+  width: 100%; height: 100%; object-fit: cover; object-position: 75% center; display: block;
+  transform: scaleX(-1); /* видео отзеркалено, как в оригинале */
+}
+.video-wrap .shade {
+  position: absolute; inset: 0; z-index: 2;
+  background:
+    linear-gradient(270deg, rgba(0,0,0,.75) 0%, rgba(0,0,0,.3) 40%, rgba(0,0,0,0) 70%),
+    linear-gradient(0deg, rgba(0,0,0,.22), rgba(0,0,0,.22)),
+    linear-gradient(180deg, rgba(0,0,0,.25) 0%, rgba(0,0,0,0) 22%, rgba(0,0,0,0) 72%, rgba(0,0,0,.5) 100%);
+}
+
+/* --- Правая колонка с формой --- */
+.form-wrap {
+  width: 40%; height: 100%; background: var(--black); flex-shrink: 0;
+  display: flex; justify-content: center;
+  padding: 4vh 4vw; overflow-y: auto; position: relative;
+}
+/* margin:auto центрирует по вертикали, но на низком экране не обрезает верх (в отличие от align-items:center) */
+.form-inner { width: 100%; max-width: 420px; margin: auto 0; }
+
+/* --- Переключатель языка --- */
+.lang-switch {
+  position: absolute; top: 24px; right: 24px; z-index: 5;
+  display: flex; gap: 4px; background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.1); border-radius: 10px; padding: 3px;
+}
+.lang-switch button {
+  font: inherit; font-size: 12px; font-weight: 700; letter-spacing: .02em;
+  color: var(--muted-2); background: transparent; border: 0; border-radius: 7px;
+  padding: 5px 10px; cursor: pointer; transition: background .15s ease, color .15s ease;
+}
+.lang-switch button.active { color: var(--text); background: var(--accent); }
+.lang-switch button:not(.active):hover { color: var(--text); }
+
+/* --- Карточка входа --- */
+.login-card {
+  opacity: 0; transform: translateY(14px);
+  animation: intro-in 1s var(--ease-out) .25s forwards;
+  width: 100%; text-align: center;
+}
+.login-card .logo-mark {
+  width: 56px; height: 56px; margin: 0 auto 24px; border-radius: 14px;
+  background: var(--surface); border: 1px solid var(--line);
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 800; font-size: 20px; color: var(--accent);
+}
+.login-card .brand { font-size: clamp(26px, 3vw, 32px); font-weight: 700; letter-spacing: -.01em; margin: 0 0 8px; }
+.login-card .brand span { color: var(--accent); }
+.login-card .lead { margin: 0 0 28px; color: var(--muted); font-size: 14px; }
+
+.login-card .field { margin-bottom: 14px; text-align: left; position: relative; }
+.login-card .field .icon {
+  position: absolute; left: 18px; top: 50%; transform: translateY(-50%);
+  color: var(--accent); display: flex; pointer-events: none;
+}
+.login-card .field input {
+  width: 100%; padding: 16px 20px 16px 48px; border-radius: 12px; font: inherit; font-size: 15px;
+  background: var(--surface); border: 1px solid var(--line); color: var(--text);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.08) inset,
+    0 -6px 14px rgba(0,0,0,.35) inset,
+    0 10px 20px rgba(0,0,0,.45),
+    0 2px 4px rgba(0,0,0,.3);
+  transition: border-color .15s ease, background .15s ease, box-shadow .15s ease, transform .15s ease;
+}
+.login-card .field input::placeholder { color: var(--muted-3); }
+.login-card .field input:focus {
+  outline: none; border-color: var(--accent); background: rgba(255,255,255,.08);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.1) inset,
+    0 -6px 14px rgba(0,0,0,.3) inset,
+    0 0 0 3px rgba(var(--accent-rgb), .25),
+    0 12px 24px rgba(0,0,0,.5);
+}
+.login-card .field .toggle-eye {
+  position: absolute; right: 16px; top: 50%; transform: translateY(-50%);
+  background: none; border: 0; padding: 0; margin: 0; cursor: pointer; color: var(--muted-2); display: flex;
+}
+.login-card .field .toggle-eye.on { color: var(--accent); }
+
+/* --- Кнопка START: контурный текст, при наведении заливка + неоновое свечение --- */
+.login-card .btn-start {
+  --border-right: 3px;
+  --text-stroke-color: rgba(255,255,255,.6);
+  --animation-color: var(--accent);
+  --glow-color: var(--glow);
+  margin: 8px 0 0; width: 100%; padding: 22px;
+  background: transparent; border: none; border-radius: 0; cursor: pointer;
+  position: relative; font: inherit; font-size: 19px; font-weight: 700;
+  letter-spacing: 3px; text-transform: uppercase; color: transparent;
+  -webkit-text-stroke: 1px var(--text-stroke-color);
+}
+.login-card .btn-start .actual-text,
+.login-card .btn-start .hover-text {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+}
+.login-card .btn-start .hover-text {
+  position: absolute; inset: 0;
+  color: var(--animation-color);
+  -webkit-text-stroke: 1px var(--animation-color);
+  clip-path: inset(0 100% 0 0);
+  transition: clip-path .5s ease;
+}
+.login-card .btn-start .hover-edge {
+  position: absolute; inset: 0; width: 0%; overflow: hidden;
+  border-right: 0 solid var(--animation-color);
+  transition: width .5s ease, border-right-width .5s ease; pointer-events: none;
+}
+.login-card .btn-start svg { flex-shrink: 0; }
+.login-card .btn-start .btn-label { margin-right: -3px; }
+.login-card .btn-start .actual-text svg { stroke: var(--text-stroke-color); }
+.login-card .btn-start .hover-text svg { stroke: var(--animation-color); }
+.login-card .btn-start:hover .hover-text,
+.login-card .btn-start:focus-visible .hover-text {
+  clip-path: inset(-60px -60px -60px -60px);
+  filter: drop-shadow(0 0 16px var(--glow-color)) drop-shadow(0 0 40px var(--glow-color)) drop-shadow(0 0 60px var(--glow-color));
+}
+.login-card .btn-start:hover .hover-edge,
+.login-card .btn-start:focus-visible .hover-edge { width: 100%; border-right-width: var(--border-right); }
+.login-card .btn-start:focus-visible { outline: none; }
+.login-card .btn-start:active { transform: scale(.98) translateY(1px); }
+
+.login-card .secure-line {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  margin: 14px 0 0; font-size: 12px; color: #7a7a7a;
+}
+.login-card .secure-line svg { color: var(--accent); }
+
+/* Сообщение под формой (сейчас — «кабинет в разработке») */
+.login-card .note {
+  margin: 16px 0 0; font-size: 13px; color: var(--muted-3); text-align: center; min-height: 16px;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+}
+.login-card .note.note-warn {
+  color: var(--warn); opacity: 0; transform: translateY(-4px);
+  animation: note-in .35s var(--ease-out) forwards;
+}
+.login-card .note.note-warn svg { flex-shrink: 0; }
+
+/* --- Карточки разделов системы --- */
+.feature-grid {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;
+  width: 100%; margin: 0 auto;
+  opacity: 0; transform: translateY(14px);
+  animation: intro-in 1s var(--ease-out) .5s forwards;
+}
+.feature-grid .card {
+  background: rgba(0,0,0,.45); border: 1px solid var(--line-soft); border-radius: 14px;
+  padding: 20px; text-align: left; cursor: pointer;
+  transition: transform .2s ease, border-color .2s ease, box-shadow .2s ease, background .2s ease;
+}
+.feature-grid .card:hover {
+  transform: translateY(-4px) scale(1.02);
+  border-color: rgba(var(--accent-rgb), .45);
+  box-shadow: 0 12px 34px rgba(var(--accent-rgb), .22);
+  background: rgba(var(--accent-rgb), .1);
+}
+.feature-grid .card .icon { color: var(--accent); margin-bottom: 12px; display: flex; }
+.feature-grid .card .icon svg { width: 24px; height: 24px; }
+.feature-grid .card .title { font-size: 16px; font-weight: 700; margin: 0 0 4px; }
+.feature-grid .card .sub { font-size: 13px; color: var(--muted-2); margin: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .login-card, .feature-grid { animation: none; opacity: 1; transform: none; }
+  .video-wrap::before { animation: none; }
+}
+
+/* --- Телефон: видео уходит на фон, форма поверх --- */
+@media (max-width: 760px) {
+  .page-login { overflow-y: auto; }
+  .lang-switch { top: 16px; right: 16px; }
+  .banner { display: block; height: auto; min-height: 100vh; min-height: 100dvh; }
+  .video-wrap { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .banner video { object-position: 60% center; }
+  .video-wrap .shade {
+    background: linear-gradient(180deg, rgba(0,0,0,.65) 0%, rgba(0,0,0,.5) 28%, rgba(0,0,0,.7) 68%, rgba(0,0,0,.92) 100%);
+  }
+  .login-card .field input { background: rgba(10,10,10,.6); border: 1px solid rgba(255,255,255,.18); }
+  .login-card .btn-start {
+    box-shadow:
+      0 1px 0 rgba(255,255,255,.25) inset,
+      0 -3px 6px rgba(0,0,0,.4) inset,
+      0 16px 30px rgba(0,0,0,.6),
+      0 4px 10px rgba(0,0,0,.5);
+  }
+  .form-wrap {
+    width: 100%; min-height: 100vh; min-height: 100dvh; height: auto;
+    background: transparent; padding: 6vh 6vw; overflow-y: visible;
+  }
+  .login-card .brand { font-size: 26px; }
+  .login-card .lead { font-size: 13px; margin-bottom: 22px; }
+}
+@media (max-width: 420px) {
+  .feature-grid { grid-template-columns: 1fr; }
+}

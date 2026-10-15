@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#000000">
+  <title>SM AVTO BASE</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/css/base.css?v=1">
+  <link rel="stylesheet" href="assets/css/login.css?v=1">
+</head>
+<body class="page-login">
+  <section class="banner">
+    <!-- Левая часть: зацикленное видео шины. Пока файла нет — виден CSS-фон с протектором -->
+    <div class="video-wrap">
+      <video autoplay muted loop playsinline preload="auto" width="1280" height="720"
+             aria-label="Зацикленное видео шины крупным планом">
+        <source src="assets/video/tire-banner.webm" type="video/webm">
+        <source src="assets/video/tire-banner.mp4" type="video/mp4">
+      </video>
+      <div class="shade"></div>
+    </div>
+
+    <div class="form-wrap">
+      <div class="lang-switch" id="langSwitch">
+        <button type="button" data-lang="ru" class="active">RU</button>
+        <button type="button" data-lang="uz">UZ</button>
+      </div>
+
+      <div class="form-inner">
+        <form class="login-card" id="loginForm" autocomplete="off">
+          <div class="logo-mark">S</div>
+          <p class="brand">SM <span>AVTO BASE</span></p>
+          <p class="lead" data-i18n="lead">Внутренняя система управления компанией</p>
+
+          <div class="field">
+            <span class="icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg></span>
+            <input id="loginName" name="login" autocomplete="username" placeholder="Введите логин" data-i18n-placeholder="loginPlaceholder">
+          </div>
+
+          <div class="field">
+            <span class="icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>
+            <input id="loginPass" name="password" type="password" autocomplete="current-password" placeholder="Введите пароль" data-i18n-placeholder="passPlaceholder">
+            <button type="button" class="toggle-eye" id="toggleEye" aria-label="Показать пароль" data-i18n-aria="toggleEye">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+          </div>
+
+          <!-- Кнопка-«обводка»: при наведении текст заливается цветом слева направо и светится -->
+          <button type="submit" class="btn-start">
+            <span class="actual-text"><span class="btn-label">START</span> <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+            <span class="hover-text" aria-hidden="true"><span class="btn-label">START</span> <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+            <span class="hover-edge" aria-hidden="true"></span>
+          </button>
+
+          <div class="secure-line">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6l8-4z"/></svg>
+            <span data-i18n="secure">Защищённое подключение</span>
+          </div>
+
+          <p class="note" id="loginNote" aria-live="polite"></p>
+        </form>
+
+        <div class="feature-grid">
+          <div class="card">
+            <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg></span>
+            <p class="title" data-i18n="salesTitle">Продажи</p>
+            <p class="sub" data-i18n="salesSub">CRM, заказы, клиенты</p>
+          </div>
+          <div class="card">
+            <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="13" rx="2"/><path d="M2 10h20"/></svg></span>
+            <p class="title" data-i18n="financeTitle">Финансы</p>
+            <p class="sub" data-i18n="financeSub">Касса, банк, отчёты</p>
+          </div>
+          <div class="card">
+            <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/></svg></span>
+            <p class="title" data-i18n="warehouseTitle">Склад</p>
+            <p class="sub" data-i18n="warehouseSub">Остатки, перемещения</p>
+          </div>
+          <div class="card">
+            <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 3h7l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M9 13h6M9 17h6"/></svg></span>
+            <p class="title" data-i18n="docsTitle">Документы</p>
+            <p class="sub" data-i18n="docsSub">Договоры, файлы, КБ</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <script src="assets/js/i18n.js?v=1"></script>
+  <script src="assets/js/login.js?v=1"></script>
+</body>
+</html>
