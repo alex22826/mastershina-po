@@ -105,29 +105,41 @@
       UI.closeTop(); UI.toast('Документ сформирован', SM.DOC_TYPES[d.type].name + ' ' + doc.no); SM.refresh(); docPreview(doc);
     };
   }
+  /* продавец видит документы своих продаж и своих клиентов, склад — своих точек */
+  const docVisible = (d) => { const s = d.saleId && SM.db.sales.find((x) => x.id === d.saleId); return s ? SM.saleVisible(s) : !SM.flag('ownOnly') || SM.client(d.clientId).sellerId === SM.user.id; };
   function documentsPage(r) {
     const type = r.q.type || '', q = (r.q.q || '').toLowerCase();
-    const list = SM.db.documents.filter((d) => (!type || d.type === type) && (!q || (d.no + ' ' + SM.client(d.clientId).name).toLowerCase().includes(q))).slice().reverse();
+    const all = SM.db.documents.filter(docVisible);
+    const list = all.filter((d) => (!type || d.type === type) && (!q || (d.no + ' ' + SM.client(d.clientId).name).toLowerCase().includes(q))).slice().reverse();
     return html`
       ${UI.pageHead('Документы', 'Счёт, товарный чек, накладная, счёт-фактура, акт сверки, договор, накладная без цен · печать и сохранение в файл', SM.can('documents', 2) || SM.can('sales', 2) ? html`<button class="btn btn-primary" data-x="new">${I('plus')}Сформировать</button>` : '')}
-      <div class="grid g-4 keep-2 stagger mb-16">${['invoice', 'facture', 'waybill', 'act'].map((t) => UI.kpi({ label: SM.DOC_TYPES[t].name, icon: 'file', value: SM.db.documents.filter((d) => d.type === t).length, count: SM.db.documents.filter((d) => d.type === t).length, foot: 'в истории' }))}</div>
+      <div class="grid g-4 keep-2 stagger mb-16">${['invoice', 'facture', 'waybill', 'act'].map((t) => UI.kpi({ label: SM.DOC_TYPES[t].name, icon: 'file', value: all.filter((d) => d.type === t).length, count: all.filter((d) => d.type === t).length, foot: 'в истории' }))}</div>
       <div class="card"><div class="card-h">${UI.searchInput(r.q.q, '№ документа или контрагент')}${UI.filterSelect('type', type, Object.entries(SM.DOC_TYPES).map(([k, v]) => [k, v.name]), 'Все виды')}</div>
         <div class="card-b" style="padding-top:12px">${list.length ? html`<div class="table-wrap"><table class="table"><thead><tr><th>Документ</th><th>Контрагент</th><th>Основание</th><th>Сформировал</th><th></th></tr></thead><tbody>
           ${list.map((d) => html`<tr class="click" data-doc="${d.id}"><td><span class="cell-title">${SM.DOC_TYPES[d.type].name}</span><span class="cell-sub mono">${d.no} · ${F.date(d.date)}</span></td><td>${SM.client(d.clientId).name}</td><td>${d.saleId ? (SM.db.sales.find((s) => s.id === d.saleId) || {}).no : d.type === 'act' ? F.date(d.from) + ' — ' + F.date(d.to) : '—'}</td><td>${SM.user_(d.by).name}<span class="cell-sub">${F.dt(d.at)}</span></td><td class="r"><span class="btn btn-ghost btn-sm">${I('eye')}Открыть</span></td></tr>`)}</tbody></table></div>` : UI.empty('Документов нет', 'Сформируйте документ по продаже или контрагенту', 'file')}</div></div>`;
   }
 
-  /* ---------- Отчёты (ТЗ 18): фильтры и выгрузка в Excel ---------- */
-  const TABS = [['stock', 'Остатки'], ['sales', 'Продажи'], ['cash', 'Оплаты и касса'], ['debts', 'Задолженности'], ['sellers', 'Работа продавцов'], ['expenses', 'Расходы']];
+  /* ---------- Отчёты (ТЗ 18): фильтры и выгрузка в Excel ----------
+     Вкладка видна, только если у роли есть доступ к соответствующему разделу:
+     продавец не видит кассу и расходы, склад — деньги и долги (ТЗ 3). */
+  const TABS = [['stock', 'Остатки', () => SM.can('stock') || SM.can('products')], ['sales', 'Продажи', () => SM.can('sales')], ['cash', 'Оплаты и касса', () => SM.can('cash') || SM.can('accounting')],
+    ['debts', 'Задолженности', () => SM.can('debts')], ['sellers', 'Работа продавцов', () => SM.can('sales') && SM.can('debts')], ['expenses', 'Расходы', () => SM.can('expenses')]];
+  const tabsFor = () => TABS.filter((t) => t[2]());
+  const reportTab = (r) => { const ok = tabsFor().map((t) => t[0]); return ok.includes(r.q.tab) ? r.q.tab : ok.includes('sales') ? 'sales' : ok[0]; };
   function buildReport(tab, r) {
     const R = SM.periodRange(r.q.p || 'month');
     const own = SM.flag('ownOnly');
-    const sales = SM.salesIn(R.from, R.to, (s) => !own || s.sellerId === SM.user.id);
+    // продавец — только свои продажи, склад — только по своим точкам
+    const sales = SM.salesIn(R.from, R.to, (s) => SM.saleVisible(s));
+    if (!tab) return { title: 'Нет доступных отчётов', cols: [''], rows: [], num: [] };
     if (tab === 'stock') {
-      const pts = SM.activePoints();
+      const pts = SM.activePoints().filter((p) => SM.pointVisible(p.id));
       const mode = r.q.m || 'all';
       if (mode === 'low') return { title: 'Товары с нулевым или низким остатком', cols: ['Код', 'Товар', 'Остаток', 'Мин.', 'Доступно'], rows: SM.db.products.filter((p) => p.active && SM.isLow(p)).map((p) => [p.code, p.name, SM.qty(p.id), p.min, SM.available(p.id)]), num: [2, 3, 4], sw: [['all', 'По точкам'], ['value', 'В деньгах'], ['low', 'Нулевой / низкий']] };
       if (mode === 'value') return { title: 'Остатки в деньгах (по себестоимости и ценам продажи)', cols: ['Точка', 'Единиц', 'По себестоимости, сум', 'По ценам продажи, сум'], rows: pts.map((pt) => { let u = 0, c = 0, s = 0; SM.db.products.forEach((p) => { const q = SM.qty(p.id, pt.id); if (q > 0) { u += q; c += q * SM.toUZS((p.buy || 0) + (p.extra || 0), p.buyCur || p.cur, SM.rate()); s += q * SM.toUZS(p.price, p.cur, SM.rate()); } }); return [pt.name, u, Math.round(c), Math.round(s)]; }), num: [1, 2, 3], total: true, sw: [['all', 'По точкам'], ['value', 'В деньгах'], ['low', 'Нулевой / низкий']] };
-      return { title: 'Общий остаток и остатки по складам и магазинам', cols: ['Код', 'Товар', ...pts.map((p) => p.name), 'Всего', 'Резерв', 'Доступно'], rows: SM.db.products.filter((p) => p.active).map((p) => [p.code, p.name, ...pts.map((x) => SM.qty(p.id, x.id)), SM.qty(p.id), SM.reserved(p.id), SM.available(p.id)]), num: [...pts.map((_, i) => i + 2), pts.length + 2, pts.length + 3, pts.length + 4], total: true, wide: true, sw: [['all', 'По точкам'], ['value', 'В деньгах'], ['low', 'Нулевой / низкий']] };
+      // «Всего» — по точкам, доступным пользователю (у склада — только его точки)
+      const vis = (fn, pid) => SM.db.points.filter((p) => SM.pointVisible(p.id)).reduce((a, x) => a + fn(pid, x.id), 0);
+      return { title: 'Общий остаток и остатки по складам и магазинам', cols: ['Код', 'Товар', ...pts.map((p) => p.name), 'Всего', 'Резерв', 'Доступно'], rows: SM.db.products.filter((p) => p.active).map((p) => [p.code, p.name, ...pts.map((x) => SM.qty(p.id, x.id)), vis(SM.qty, p.id), vis(SM.reserved, p.id), vis(SM.available, p.id)]), num: [...pts.map((_, i) => i + 2), pts.length + 2, pts.length + 3, pts.length + 4], total: true, wide: true, sw: [['all', 'По точкам'], ['value', 'В деньгах'], ['low', 'Нулевой / низкий']] };
     }
     if (tab === 'sales') {
       const g = r.q.g || 'day';
@@ -151,10 +163,11 @@
     }
     if (tab === 'debts') {
       const mode = r.q.m || 'clients';
-      if (mode === 'history') return { title: 'История погашения (оплаты без привязки к продаже и по продажам в долг)', cols: ['Дата', 'Контрагент', 'Способ', 'Сумма', 'Валюта', 'Статус'], rows: SM.db.payments.filter((p) => p.dir === 'in' && (!p.saleId || (SM.db.sales.find((s) => s.id === p.saleId) || {}).credit)).map((p) => [F.date(p.at), SM.client(p.clientId).name, SM.method(p.method).name, p.amount, p.cur, SM.PAY_STATUS[p.status][0]]), num: [3], sw: [['clients', 'По клиентам'], ['sellers', 'По продавцам'], ['overdue', 'Просроченные'], ['history', 'История погашения']] };
-      if (mode === 'overdue') return { title: 'Просроченные долги', cols: ['Продажа', 'Клиент', 'Продавец', 'Срок', 'Дней просрочки', 'Долг, сум'], rows: SM.db.sales.filter(SM.overdue).map((s) => [s.no, SM.client(s.clientId).name, SM.user_(s.sellerId).name, F.date(s.due), D.diffDays(D.todayISO(), s.due), Math.round(SM.toUZS(SM.saleCalc(s).debt, s.cur, s.rate))]), num: [4, 5], total: true, sw: [['clients', 'По клиентам'], ['sellers', 'По продавцам'], ['overdue', 'Просроченные'], ['history', 'История погашения']] };
-      if (mode === 'sellers') { const m = {}; SM.db.clients.forEach((c) => { const b = SM.balance(c.id); if (b > 0.5) { const k = c.sellerId ? SM.user_(c.sellerId).name : 'Без продавца'; m[k] = m[k] || [0, 0]; m[k][0]++; m[k][1] += b; } }); return { title: 'Дебиторская задолженность по продавцам', cols: ['Продавец', 'Клиентов-должников', 'Сумма долга, сум'], rows: Object.entries(m).map(([k, v]) => [k, v[0], Math.round(v[1])]), num: [1, 2], total: true, sw: [['clients', 'По клиентам'], ['sellers', 'По продавцам'], ['overdue', 'Просроченные'], ['history', 'История погашения']] }; }
-      return { title: 'Общая дебиторская задолженность по клиентам', cols: ['Клиент', 'Телефон', 'Продавец', 'Долг, сум'], rows: SM.db.clients.filter((c) => SM.balance(c.id) > 0.5 && (!own || c.sellerId === SM.user.id)).map((c) => [c.name, c.phone, c.sellerId ? SM.user_(c.sellerId).name : '', Math.round(SM.balance(c.id))]), num: [3], total: true, sw: [['clients', 'По клиентам'], ['sellers', 'По продавцам'], ['overdue', 'Просроченные'], ['history', 'История погашения']] };
+      const mineClient = (id) => !own || SM.client(id).sellerId === SM.user.id;
+      if (mode === 'history') return { title: 'История погашения (оплаты без привязки к продаже и по продажам в долг)', cols: ['Дата', 'Контрагент', 'Способ', 'Сумма', 'Валюта', 'Статус'], rows: SM.db.payments.filter((p) => { const s = p.saleId && SM.db.sales.find((x) => x.id === p.saleId); return p.dir === 'in' && (s ? s.credit && SM.saleVisible(s) : mineClient(p.clientId)); }).map((p) => [F.date(p.at), SM.client(p.clientId).name, SM.method(p.method).name, p.amount, p.cur, SM.PAY_STATUS[p.status][0]]), num: [3], sw: [['clients', 'По клиентам'], ['sellers', 'По продавцам'], ['overdue', 'Просроченные'], ['history', 'История погашения']] };
+      if (mode === 'overdue') return { title: 'Просроченные долги', cols: ['Продажа', 'Клиент', 'Продавец', 'Срок', 'Дней просрочки', 'Долг, сум'], rows: SM.db.sales.filter((s) => SM.overdue(s) && SM.saleVisible(s)).map((s) => [s.no, SM.client(s.clientId).name, SM.user_(s.sellerId).name, F.date(s.due), D.diffDays(D.todayISO(), s.due), Math.round(SM.toUZS(SM.saleCalc(s).debt, s.cur, s.rate))]), num: [4, 5], total: true, sw: [['clients', 'По клиентам'], ['sellers', 'По продавцам'], ['overdue', 'Просроченные'], ['history', 'История погашения']] };
+      if (mode === 'sellers') { const m = {}; SM.db.clients.filter((c) => mineClient(c.id)).forEach((c) => { const b = SM.balance(c.id); if (b > 0.5) { const k = c.sellerId ? SM.user_(c.sellerId).name : 'Без продавца'; m[k] = m[k] || [0, 0]; m[k][0]++; m[k][1] += b; } }); return { title: 'Дебиторская задолженность по продавцам', cols: ['Продавец', 'Клиентов-должников', 'Сумма долга, сум'], rows: Object.entries(m).map(([k, v]) => [k, v[0], Math.round(v[1])]), num: [1, 2], total: true, sw: [['clients', 'По клиентам'], ['sellers', 'По продавцам'], ['overdue', 'Просроченные'], ['history', 'История погашения']] }; }
+      return { title: 'Общая дебиторская задолженность по клиентам', cols: ['Клиент', 'Телефон', 'Продавец', 'Долг, сум'], rows: SM.db.clients.filter((c) => SM.balance(c.id) > 0.5 && mineClient(c.id)).map((c) => [c.name, c.phone, c.sellerId ? SM.user_(c.sellerId).name : '', Math.round(SM.balance(c.id))]), num: [3], total: true, sw: [['clients', 'По клиентам'], ['sellers', 'По продавцам'], ['overdue', 'Просроченные'], ['history', 'История погашения']] };
     }
     if (tab === 'sellers') {
       const users = SM.db.users.filter((u) => u.role === 'seller' && (!own || u.id === SM.user.id));
@@ -172,7 +185,7 @@
       sw: [['cat', 'По категориям'], ['emp', 'По сотрудникам'], ['point', 'По точкам'], ['car', 'По автомобилям']], swParam: 'g', extra: html`<p class="fs-13 muted mt-12">Стоимость доставок за период (по заявкам): <b class="text-2">${F.cur(dlv)}</b></p>` };
   }
   function reportsPage(r) {
-    const tab = r.q.tab || 'sales';
+    const tab = reportTab(r);
     const rep = buildReport(tab, r);
     const swP = rep.swParam || 'm';
     const sw = rep.sw ? html`<div class="seg">${rep.sw.map(([k, t]) => html`<button class="${(r.q[swP] || rep.sw[0][0]) === k ? 'on' : ''}" data-sw="${k}" data-swp="${swP}">${t}</button>`)}</div>` : '';
@@ -180,7 +193,7 @@
     const cell = (v, i) => (rep.num.includes(i) && typeof v === 'number' ? F.num(v, Math.abs(v) < 1000 && v % 1 ? 2 : 0) : v);
     return html`
       ${UI.pageHead('Отчёты', 'Остатки, продажи, оплаты и касса, задолженности, работа продавцов, расходы · фильтры и выгрузка в Excel', html`<button class="btn btn-primary" data-x="export">${I('download')}Выгрузить в Excel</button>`)}
-      ${UI.tabs(TABS, tab)}
+      ${UI.tabs(tabsFor().map((t) => [t[0], t[1]]), tab)}
       <div class="row mb-16">${sw}${rep.period ? html`<span class="right">${UI.periodSeg(r.q.p || 'month')}</span>` : ''}</div>
       <div class="card"><div class="card-h"><h3>${I('chart')}${rep.title}</h3><span class="sub right">${rep.rows.length} строк</span></div><div class="card-b">
         ${rep.chart ? html`<div class="mb-16">${rep.chart}</div>` : ''}
@@ -195,7 +208,7 @@
       UI.bindSearch(el); UI.bindFilters(el);
       const n = el.querySelector('[data-x=new]'); if (n) n.onclick = newDocModal;
       UI.$$('[data-doc]', el).forEach((x) => (x.onclick = () => docPreview(SM.db.documents.find((d) => d.id === x.dataset.doc))));
-      if (r.q.open) { const d = SM.db.documents.find((x) => x.id === r.q.open); if (d) docPreview(d); }
+      if (r.q.open) { const d = SM.db.documents.find((x) => x.id === r.q.open); if (d && docVisible(d)) docPreview(d); }
     },
   });
   SM.page('reports', {
@@ -203,7 +216,7 @@
     mount(el, r) {
       UI.bindTabs(el); UI.bindPeriod(el);
       UI.$$('[data-sw]', el).forEach((b) => (b.onclick = () => SM.setQuery({ [b.dataset.swp]: b.dataset.sw }, true)));
-      el.querySelector('[data-x=export]').onclick = () => { const rep = buildReport(r.q.tab || 'sales', r); UI.exportXLSX(rep.title.replace(/[^\wа-яё]+/gi, '_').slice(0, 60), [rep.cols, ...rep.rows], (TABS.find((t) => t[0] === (r.q.tab || 'sales')) || [0, 'Отчёт'])[1]); };
+      el.querySelector('[data-x=export]').onclick = () => { const tab = reportTab(r), rep = buildReport(tab, r); UI.exportXLSX(rep.title.replace(/[^\wа-яё]+/gi, '_').slice(0, 60), [rep.cols, ...rep.rows], (TABS.find((t) => t[0] === tab) || [0, 'Отчёт'])[1]); };
     },
   });
 })();

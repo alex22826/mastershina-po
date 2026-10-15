@@ -258,6 +258,8 @@
   SM.openSale = function (id) {
     const s = SM.db.sales.find((x) => x.id === id);
     if (!s) return UI.toast('Продажа не найдена', '', 'warn');
+    // прямая ссылка не открывает чужую продажу (ТЗ 3.3: продавец видит свои продажи)
+    if (!SM.saleVisible(s)) return UI.toast('Нет доступа к продаже', s.no + ' оформлена другим продавцом или на другой точке', 'warn');
     const c = SM.saleCalc(s), stt = SM.saleStatus(s), cl = SM.client(s.clientId);
     const dlv = SM.db.deliveries.find((x) => x.saleId === s.id);
     const fl = ['draft', 'await', 'paid', 'ready', 'shipped', 'done'];

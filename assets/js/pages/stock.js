@@ -385,7 +385,7 @@
       UI.bindSearch(el); UI.bindFilters(el); UI.bindTabs(el); UI.bindPeriod(el);
       const lw = el.querySelector('[data-x=low]'); if (lw) lw.onchange = () => SM.setQuery({ low: lw.checked ? '1' : '' }, true);
       const a = el.querySelector('[data-x=adjust]'); if (a) a.onclick = () => adjustModal(null);
-      el.querySelector('[data-x=export]').onclick = () => { const pts = SM.activePoints(); UI.exportXLSX('Остатки_' + D.todayISO(), [['Код', 'Товар', ...pts.map((p) => p.name), 'Всего', 'Резерв', 'Доступно', 'Мин.'], ...SM.db.products.map((p) => [p.code, p.name, ...pts.map((x) => SM.qty(p.id, x.id)), SM.qty(p.id), SM.reserved(p.id), SM.available(p.id), p.min])], 'Остатки'); };
+      el.querySelector('[data-x=export]').onclick = () => { const pts = SM.activePoints().filter((p) => SM.pointVisible(p.id)); UI.exportXLSX('Остатки_' + D.todayISO(), [['Код', 'Товар', ...pts.map((p) => p.name), 'Всего', 'Резерв', 'Доступно', 'Мин.'], ...SM.db.products.map((p) => [p.code, p.name, ...pts.map((x) => SM.qty(p.id, x.id)), SM.qty(p.id), SM.reserved(p.id), SM.available(p.id), p.min])], 'Остатки'); };
     },
   });
   SM.page('receipts', {
