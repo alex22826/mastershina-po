@@ -124,11 +124,40 @@
 
   /* ---------- Импорт справочника из Excel (ТЗ 5.3) ---------- */
   const IMPORT_COLS = ['Код в старой программе', 'Наименование', 'Альтернативные названия', 'Категория', 'Производитель', 'Бренд', 'Ед.', 'Закупочная цена', 'Доп. расходы', 'Цена продажи', 'Валюта', 'Мин. остаток', 'Размер шины', 'Сезон'];
+  /* CSV: разделитель «;» или «,»; значение в кавычках может содержать разделитель и кавычки */
+  function parseCSV(text) {
+    const t = text.replace(/^﻿/, '');
+    const sep = t.split('\n')[0].includes(';') ? ';' : ',';
+    const rows = [];
+    let row = [], cell = '', q = false;
+    for (let i = 0; i < t.length; i++) {
+      const ch = t[i];
+      if (q) { if (ch !== '"') cell += ch; else if (t[i + 1] === '"') { cell += '"'; i++; } else q = false; }
+      else if (ch === '"') q = true;
+      else if (ch === sep) { row.push(cell.trim()); cell = ''; }
+      else if (ch === '\n' || ch === '\r') { if (ch === '\r' && t[i + 1] === '\n') i++; row.push(cell.trim()); rows.push(row); row = []; cell = ''; }
+      else cell += ch;
+    }
+    if (cell || row.length) { row.push(cell.trim()); rows.push(row); }
+    return rows;
+  }
+  // числа из Excel и CSV: «1 450 000», «58000,50», неразрывные пробелы; пустое — 0
+  const impNum = (v) => { const s = String(v == null ? '' : v).replace(/[\s ]/g, '').replace(',', '.'); return s === '' ? 0 : Number(s); };
+  // валюта: пусто/UZS/сум — сумы, USD/$/доллар — доллары, остальное — ошибка
+  const impCur = (v) => { const s = String(v || '').trim().toLowerCase(); if (!s || /^(uzs|сум|so'?m)/.test(s)) return 'UZS'; if (/^(usd|\$|долл)/.test(s)) return 'USD'; return null; };
   function importModal() {
     const m = UI.modal({ title: 'Импорт товаров из Excel', sub: 'Проверка ошибок и защита от дублей: совпадение кода старой программы или названия — строка пропускается', size: 'xl',
       body: html`<div class="row"><label class="btn btn-primary">${I('upload')}Выбрать файл .xlsx / .csv<input type="file" accept=".xlsx,.xls,.csv" hidden data-x="file"></label><button class="btn btn-secondary" data-x="tpl">${I('download')}Скачать шаблон</button><span class="muted fs-13">Колонки: ${IMPORT_COLS.slice(0, 4).join(', ')}…</span></div><div id="impRes" class="mt-16"></div>`,
-      foot: html`<button class="btn btn-ghost" data-close>Закрыть</button><button class="btn btn-primary" data-x="go" disabled>${I('check')}Импортировать</button>` });
-    let ready = [];
+      foot: html`<button class="btn btn-ghost" data-close>Закрыть</button><button class="btn btn-secondary" data-x="report" disabled>${I('download')}Результат в Excel</button><button class="btn btn-primary" data-x="go" disabled>${I('check')}Импортировать</button>` });
+    let ready = [], out = [];
+    const status = (x) => (x.err ? 'ошибка: ' + x.err : x.dup ? 'пропуск: ' + x.dup : x.code ? 'добавлен · ' + x.code : 'будет добавлен');
+    const drawRes = () => {
+      const bad = out.filter((x) => x.err), dup = out.filter((x) => x.dup), done = out.some((x) => x.code);
+      m.querySelector('#impRes').innerHTML = String(html`<div class="grid g-3 keep-2"><div class="cash-acc"><span>${I('check')}${done ? 'Добавлено' : 'Будут добавлены'}</span><b class="ok-t">${ready.length}</b></div><div class="cash-acc"><span>${I('copy')}Дубли — пропуск</span><b class="warn-t">${dup.length}</b></div><div class="cash-acc"><span>${I('alert')}Ошибки</span><b class="bad-t">${bad.length}</b></div></div>
+        <div class="table-wrap mt-16" style="max-height:340px;overflow:auto"><table class="table compact"><thead><tr><th>Строка</th><th>Наименование</th><th class="r">Цена</th><th>Результат</th></tr></thead><tbody>${out.map((x) => html`<tr class="${x.err ? 'row-bad' : x.dup ? 'row-warn' : ''}"><td>${x.n}</td><td>${x.name || '—'}</td><td class="r">${x.price > 0 ? F.cur(x.price, x.cur || 'UZS') : '—'}</td><td>${html`<span class="badge ${x.err ? 'b-bad' : x.dup ? 'b-warn' : 'b-ok'}">${x.err || x.dup || (x.code ? 'добавлен · ' + x.code : 'новый')}</span>`}</td></tr>`)}</tbody></table></div>`);
+    };
+    // ТЗ 5.3: результат импорта — построчно, с причиной пропуска; после импорта — с присвоенными кодами
+    m.querySelector('[data-x=report]').onclick = () => UI.exportXLSX('Результат_импорта_' + D.todayISO(), [['Строка', 'Код в старой программе', 'Наименование', 'Цена продажи', 'Валюта', 'Результат'], ...out.map((x) => [x.n, x.old, x.name, x.price > 0 ? x.price : '', x.cur || '', status(x)])], 'Результат');
     m.querySelector('[data-x=tpl]').onclick = () => UI.exportXLSX('Шаблон_импорта_товаров', [IMPORT_COLS, ['1C-099001', 'Michelin Pilot Sport 4 225/45 R17 94Y', 'мишлен спорт 17', 'Летние шины', 'Michelin, Франция', 'Michelin', 'шт', 1450000, 30000, 1950000, 'UZS', 4, '225/45 R17', 'Летняя'], ['1C-099002', 'Фильтр салонный MANN CU 2533', 'салонник кобальт', 'Фильтры', 'MANN-FILTER', 'MANN', 'шт', 58000, 2000, 89000, 'UZS', 10, '', '']], 'Товары');
     m.querySelector('[data-x=file]').onchange = async (e) => {
       const file = e.target.files[0]; if (!file) return;
@@ -136,41 +165,51 @@
       res.innerHTML = '<p class="muted">Читаю файл…</p>';
       let rows;
       try {
-        if (/\.csv$/i.test(file.name)) { const t = await file.text(); const sep = t.split('\n')[0].includes(';') ? ';' : ','; rows = t.split(/\r?\n/).filter((l) => l.trim()).map((l) => l.split(sep).map((v) => v.replace(/^"|"$/g, '').trim())); }
+        if (/\.csv$/i.test(file.name)) rows = parseCSV(await file.text());
         else { const X = await UI.loadXLSX(); const wb = X.read(await file.arrayBuffer()); rows = X.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' }); }
       } catch (err) { res.innerHTML = String(html`<div class="note-box bad">${I('alert')}<div>Не удалось прочитать файл: ${err.message}</div></div>`); return; }
-      const head = rows[0].map((h) => String(h).trim().toLowerCase());
+      const head = (rows[0] || []).map((h) => String(h).trim().toLowerCase());
       const col = (name) => head.indexOf(name.toLowerCase());
+      if (col('Наименование') < 0 || col('Цена продажи') < 0) { res.innerHTML = String(html`<div class="note-box bad">${I('alert')}<div>В первой строке нет колонок «Наименование» и «Цена продажи» — скачайте шаблон и заполните его.</div></div>`); return; }
+      // дубли внутри файла ловим и по коду старой программы, и по названию — как при проверке по справочнику
       const seen = new Set();
-      const out = rows.slice(1).filter((r) => r.some((v) => String(v).trim())).map((r, i) => {
-        const g = (n) => { const c = col(n); return c >= 0 ? String(r[c]).trim() : ''; };
-        const name = g('Наименование'), old = g('Код в старой программе'), price = parseFloat(String(g('Цена продажи')).replace(/\s/g, '').replace(',', '.'));
+      out = rows.slice(1).map((r, i) => [r, i]).filter(([r]) => r.some((v) => String(v).trim())).map(([r, i]) => {
+        const g = (n) => { const c = col(n); return c >= 0 ? String(r[c] == null ? '' : r[c]).trim() : ''; };
+        const name = g('Наименование'), old = g('Код в старой программе'), price = impNum(g('Цена продажи')), cur = impCur(g('Валюта'));
+        const nums = { buy: impNum(g('Закупочная цена')), extra: impNum(g('Доп. расходы')), min: impNum(g('Мин. остаток')) };
         const catName = g('Категория').toLowerCase();
         const cat = SM.db.categories.find((c) => c.name.toLowerCase() === catName || c.name.toLowerCase().replace(' шины', '') === catName);
-        const row = { n: i + 2, name, old, price, cat: cat && cat.id, raw: g };
+        const row = { n: i + 2, name, old, price, cur, nums, cat: cat && cat.id, raw: g };
+        const kOld = old && 'o:' + old.toLowerCase(), kName = 'n:' + name.toLowerCase();
         if (!name) row.err = 'нет наименования';
         else if (!(price > 0)) row.err = 'цена продажи не число';
         else if (!cat) row.err = 'категория «' + g('Категория') + '» не найдена';
+        else if (!cur) row.err = 'валюта «' + g('Валюта') + '» — укажите UZS или USD';
+        else if (Object.values(nums).some((x) => !isFinite(x) || x < 0)) row.err = 'закупка, доп. расходы или мин. остаток — не число';
         else if (SM.db.products.some((p) => (old && p.oldCode === old) || p.name.toLowerCase() === name.toLowerCase())) row.dup = 'уже есть в справочнике';
-        else if (seen.has((old || name).toLowerCase())) row.dup = 'повтор в файле';
-        seen.add((old || name).toLowerCase());
+        else if ((kOld && seen.has(kOld)) || seen.has(kName)) row.dup = 'повтор в файле';
+        if (!row.err) { if (kOld) seen.add(kOld); seen.add(kName); }
         return row;
       });
       ready = out.filter((x) => !x.err && !x.dup);
-      const bad = out.filter((x) => x.err), dup = out.filter((x) => x.dup);
-      res.innerHTML = String(html`<div class="grid g-3 keep-2"><div class="cash-acc"><span>${I('check')}Будут добавлены</span><b class="ok-t">${ready.length}</b></div><div class="cash-acc"><span>${I('copy')}Дубли — пропуск</span><b class="warn-t">${dup.length}</b></div><div class="cash-acc"><span>${I('alert')}Ошибки</span><b class="bad-t">${bad.length}</b></div></div>
-        <div class="table-wrap mt-16" style="max-height:340px;overflow:auto"><table class="table compact"><thead><tr><th>Строка</th><th>Наименование</th><th class="r">Цена</th><th>Результат</th></tr></thead><tbody>${out.map((x) => html`<tr class="${x.err ? 'row-bad' : x.dup ? 'row-warn' : ''}"><td>${x.n}</td><td>${x.name || '—'}</td><td class="r">${x.price > 0 ? F.num(x.price) : '—'}</td><td>${x.err ? html`<span class="badge b-bad">${x.err}</span>` : x.dup ? html`<span class="badge b-warn">${x.dup}</span>` : html`<span class="badge b-ok">новый</span>`}</td></tr>`)}</tbody></table></div>`);
+      drawRes();
       m.querySelector('[data-x=go]').disabled = !ready.length;
+      m.querySelector('[data-x=report]').disabled = !out.length;
     };
     m.querySelector('[data-x=go]').onclick = () => {
       ready.forEach((x) => {
         const g = x.raw, tire = SM.catRoot(x.cat).id === 'c-tires', size = g('Размер шины');
         const mm = size.match(/(\d+)\/(\d+)\s*(R[\d.]+)/);
-        SM.db.products.push({ id: SM.uid('pr'), code: SM.nextProductCode(), oldCode: x.old, name: x.name, alt: g('Альтернативные названия').split(',').map((s) => s.trim()).filter(Boolean), cat: x.cat, maker: g('Производитель'), brand: g('Бренд'), unit: g('Ед.') || 'шт',
-          attrs: tire && mm ? { size, width: mm[1], profile: mm[2], radius: mm[3], season: g('Сезон') } : {}, buy: +g('Закупочная цена') || 0, extra: +g('Доп. расходы') || 0, buyCur: g('Валюта') === 'USD' ? 'USD' : 'UZS', price: x.price, cur: g('Валюта') === 'USD' ? 'USD' : 'UZS', vat: 12, min: +g('Мин. остаток') || 0, comment: '', active: true, createdAt: new Date().toISOString() });
+        x.code = SM.nextProductCode();
+        SM.db.products.push({ id: SM.uid('pr'), code: x.code, oldCode: x.old, name: x.name, alt: g('Альтернативные названия').split(',').map((s) => s.trim()).filter(Boolean), cat: x.cat, maker: g('Производитель'), brand: g('Бренд'), unit: g('Ед.') || 'шт',
+          attrs: tire && mm ? { size, width: mm[1], profile: mm[2], radius: mm[3], season: g('Сезон') } : {}, buy: x.nums.buy, extra: x.nums.extra, buyCur: x.cur, price: x.price, cur: x.cur, vat: 12, min: x.nums.min, comment: '', active: true, createdAt: new Date().toISOString() });
       });
-      SM.log('Импорт справочника из Excel', 'product', null, 'Добавлено товаров: ' + ready.length);
-      SM.save(); UI.closeTop(); UI.toast('Импорт завершён', 'Добавлено товаров: ' + ready.length); SM.refresh();
+      SM.log('Импорт справочника из Excel', 'product', null, 'Добавлено: ' + ready.length + ', дублей пропущено: ' + out.filter((x) => x.dup).length + ', ошибок: ' + out.filter((x) => x.err).length);
+      SM.save(); UI.toast('Импорт завершён', 'Добавлено товаров: ' + ready.length + ' · результат можно скачать в Excel'); SM.refresh();
+      // окно остаётся открытым: в таблице — присвоенные коды, файл результата доступен
+      drawRes();
+      m.querySelector('[data-x=go]').disabled = true;
+      m.querySelector('[data-x=file]').disabled = true;
     };
   }
 
