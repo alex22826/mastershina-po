@@ -8,28 +8,14 @@
 }
 
 /* --- Видео-баннер --- */
-.video-wrap {
-  position: relative; width: 60%; height: 100%; overflow: hidden; flex-shrink: 0;
-  /* Запасной фон, пока нет видео: тёмная резина с бликом справа */
-  background: radial-gradient(120% 90% at 85% 55%, #232327 0%, #111114 38%, #050506 70%, #000 100%);
-}
-/* Псевдо-протектор из двух сеток канавок — виден, только если видео не загрузилось */
-.video-wrap::before {
-  content: ""; position: absolute; inset: -25%; z-index: 0;
-  background:
-    repeating-linear-gradient(118deg, transparent 0 44px, rgba(255,255,255,.05) 44px 46px, rgba(0,0,0,.75) 46px 54px),
-    repeating-linear-gradient(28deg, transparent 0 92px, rgba(255,255,255,.04) 92px 94px, rgba(0,0,0,.8) 94px 104px);
-  animation: tread-drift 18s ease-in-out infinite alternate;
-}
-@keyframes tread-drift { to { transform: translate(-60px, 90px); } }
+.video-wrap { position: relative; width: 60%; height: 100%; overflow: hidden; flex-shrink: 0; }
 
 .banner video {
-  position: relative; z-index: 1;
   width: 100%; height: 100%; object-fit: cover; object-position: 75% center; display: block;
   transform: scaleX(-1); /* видео отзеркалено, как в оригинале */
 }
 .video-wrap .shade {
-  position: absolute; inset: 0; z-index: 2;
+  position: absolute; inset: 0;
   background:
     linear-gradient(270deg, rgba(0,0,0,.75) 0%, rgba(0,0,0,.3) 40%, rgba(0,0,0,0) 70%),
     linear-gradient(0deg, rgba(0,0,0,.22), rgba(0,0,0,.22)),
@@ -209,7 +195,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .login-card, .feature-grid { animation: none; opacity: 1; transform: none; }
-  .video-wrap::before { animation: none; }
 }
 
 /* --- Телефон: видео уходит на фон, форма поверх --- */

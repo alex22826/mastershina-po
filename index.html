@@ -7,16 +7,18 @@
   <title>SM AVTO BASE</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="assets/css/base.css?v=1">
-  <link rel="stylesheet" href="assets/css/login.css?v=2">
+  <link rel="stylesheet" href="assets/css/login.css?v=3">
 </head>
 <body class="page-login">
   <section class="banner">
-    <!-- Левая часть: зацикленное видео шины. Пока файла нет — виден CSS-фон с протектором -->
+    <!-- Левая часть: зацикленное видео шины (720p, без звука). webm — для Chrome/Firefox, mp4 — для Safari/iPhone.
+         После замены видео поднимать ?v=N, иначе браузер покажет старое из кэша -->
     <div class="video-wrap">
       <video autoplay muted loop playsinline preload="auto" width="1280" height="720"
+             poster="assets/video/tire-banner-poster.jpg?v=1"
              aria-label="Зацикленное видео шины крупным планом">
-        <source src="assets/video/tire-banner.webm" type="video/webm">
-        <source src="assets/video/tire-banner.mp4" type="video/mp4">
+        <source src="assets/video/tire-banner.webm?v=1" type="video/webm">
+        <source src="assets/video/tire-banner.mp4?v=1" type="video/mp4">
       </video>
       <div class="shade"></div>
     </div>
