@@ -147,6 +147,10 @@
     syncRate();
     const fmtC = (v) => F.cur(v, cur());
     const priceIn = (p) => SM.conv(p.price, p.cur, cur(), rate());
+    // ТЗ 9.3: снижение цены вручную — тоже скидка. Итог строки (цена, скидка строки и документа)
+    // не может быть ниже «цена из карточки × (1 − лимит роли)»
+    const minPrice = (pid) => priceIn(SM.product(pid)) * (1 - SM.discountMax() / 100);
+    const effPrice = (l) => l.price * (1 - (l.disc || 0) / 100) * (1 - (+sel('docDisc').value || 0) / 100);
     // при редактировании черновика его собственный резерв не мешает
     const avail = (pid) => SM.available(pid, pointId()) + (editing && editing.pointId === pointId() ? editing.items.filter((l) => l.productId === pid).reduce((a, l) => a + l.qty, 0) : 0);
 
@@ -206,6 +210,15 @@
       if (k === 'qty') { const av = avail(l.productId); row.querySelector('.ln-avail').className = 'ln-avail ' + (l.qty > av ? 'bad-t' : 'ok-t'); }
       drawTotals();
     });
+    // цену проверяем, когда ввод закончен (иначе первая цифра сразу упрётся в минимум)
+    UI.$('#lines', el).addEventListener('change', (e) => {
+      if (e.target.dataset.k !== 'price') return;
+      const row = e.target.closest('.line'), l = st.items[+row.dataset.i], min = minPrice(l.productId);
+      if (l.price >= min - calc().eps) return;
+      l.price = Math.ceil(min * 100) / 100; e.target.value = l.price;
+      row.querySelector('[data-sum]').textContent = fmtC(SM.lineSum(l)); drawTotals();
+      UI.toast('Цена ограничена', 'Ниже ' + fmtC(min) + ' — это скидка больше вашего лимита ' + SM.discountMax() + '%', 'warn');
+    });
     UI.$('#lines', el).addEventListener('click', (e) => { const d = e.target.closest('[data-del]'); if (d) { st.items.splice(+d.dataset.del, 1); redraw(); } });
     UI.$('#pays', el).addEventListener('input', (e) => { const k = e.target.dataset.pk; if (k === 'amount') { st.pays[+e.target.closest('.pay-row').dataset.pi].amount = +e.target.value || 0; drawTotals(); } });
     UI.$('#pays', el).addEventListener('change', (e) => { const k = e.target.dataset.pk; if (k === 'method') { st.pays[+e.target.closest('.pay-row').dataset.pi].method = e.target.value; drawPays(); drawTotals(); } });
@@ -239,6 +252,8 @@
       if (!st.items.length) return UI.toast('Добавьте товары', 'В продаже нет ни одной позиции', 'warn');
       if (st.items.some((l) => !(l.qty > 0) || !(l.price > 0))) return UI.toast('Проверьте строки', 'Количество и цена должны быть больше нуля', 'warn');
       const c = calc();
+      const cheap = st.items.find((l) => effPrice(l) < minPrice(l.productId) - c.eps);
+      if (cheap) return UI.toast('Скидка больше лимита', SM.product(cheap.productId).name + ': с учётом цены и скидки на документ — не больше ' + SM.discountMax() + '%', 'bad');
       if (post) {
         const over = st.items.find((l) => l.qty > avail(l.productId));
         if (over) return UI.toast('Не хватает товара', SM.product(over.productId).name + ': доступно ' + avail(over.productId), 'bad');
