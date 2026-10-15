@@ -475,7 +475,9 @@
     const draw = () => { from = m.querySelector('[name=from]').value; to = m.querySelector('[name=to]').value; prev.innerHTML = SM.actHTML(clientId, from, to); };
     m.querySelectorAll('input[type=date]').forEach((x) => x.addEventListener('change', draw));
     draw();
-    const register = () => { const d = SM.ops.createDoc('act', { clientId, from, to }); return d.no; };
+    // номер присваивается один раз на акт: печать и сохранение того же периода не плодят новые номера
+    let reg = null;
+    const register = () => { if (!reg || reg.from !== from || reg.to !== to) reg = { from, to, no: SM.ops.createDoc('act', { clientId, from, to }).no }; return reg.no; };
     m.querySelector('[data-x=print]').onclick = () => { const no = register(); UI.printDoc('Акт сверки ' + no, SM.actHTML(clientId, from, to, no)); };
     m.querySelector('[data-x=doc]').onclick = () => { const no = register(); UI.saveDoc('Акт_сверки_' + no, 'Акт сверки', SM.actHTML(clientId, from, to, no)); };
     m.querySelector('[data-x=xlsx]').onclick = () => {

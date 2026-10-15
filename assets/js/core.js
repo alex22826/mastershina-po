@@ -383,7 +383,8 @@
     return SM.memo('ledger:' + clientId, () => {
       const c = SM.client(clientId);
       const ops = [];
-      SM.db.sales.filter((s) => s.clientId === clientId && s.state !== 'draft').forEach((s) => {
+      // удалённый черновик (отменён, не проводился) во взаиморасчёты не попадает
+      SM.db.sales.filter((s) => s.clientId === clientId && s.state !== 'draft' && !(s.state === 'cancelled' && !s.postedAt)).forEach((s) => {
         ops.push({ at: s.date, doc: 'Продажа ' + s.no, ref: s.id, kind: 'sale', debit: SM.saleTotalUZS(s), credit: 0 });
         if (s.state === 'cancelled') ops.push({ at: s.cancelledAt || s.date, doc: 'Отмена продажи ' + s.no, ref: s.id, kind: 'cancel', debit: 0, credit: SM.saleTotalUZS(s) });
       });
