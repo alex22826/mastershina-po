@@ -420,11 +420,16 @@
   });
   SM.page('stock', {
     title: 'Остатки', render: stockPage,
-    mount(el) {
+    mount(el, r) {
       UI.bindSearch(el); UI.bindFilters(el); UI.bindTabs(el); UI.bindPeriod(el);
       const lw = el.querySelector('[data-x=low]'); if (lw) lw.onchange = () => SM.setQuery({ low: lw.checked ? '1' : '' }, true);
       const a = el.querySelector('[data-x=adjust]'); if (a) a.onclick = () => adjustModal(null);
-      el.querySelector('[data-x=export]').onclick = () => { const pts = SM.activePoints().filter((p) => SM.pointVisible(p.id)); UI.exportXLSX('Остатки_' + D.todayISO(), [['Код', 'Товар', ...pts.map((p) => p.name), 'Всего', 'Резерв', 'Доступно', 'Мин.'], ...SM.db.products.map((p) => [p.code, p.name, ...pts.map((x) => SM.qty(p.id, x.id)), SM.qty(p.id), SM.reserved(p.id), SM.available(p.id), p.min])], 'Остатки'); };
+      el.querySelector('[data-x=export]').onclick = () => {
+        // на вкладке «Движение товара» выгружается движение с теми же фильтрами, что на экране
+        if (r.q.tab === 'moves') { const R = SM.periodRange(r.q.p || 'month'), q = (r.q.q || '').toLowerCase().split(/\s+/).filter(Boolean);
+          const mv = SM.db.moves.filter((m) => D.inRange(m.at, R.from, R.to) && (!r.q.pt || m.pointId === r.q.pt) && (!r.q.kind || m.kind === r.q.kind) && SM.pointVisible(m.pointId) && q.every((w) => (SM.product(m.productId).name + ' ' + SM.product(m.productId).code + ' ' + (m.doc || '')).toLowerCase().includes(w))).sort((a, b) => String(b.at).localeCompare(String(a.at)));
+          return UI.exportXLSX('Движение_товара_' + D.todayISO(), [['Дата', 'Код', 'Товар', 'Точка', 'Операция', 'Документ', 'Кол-во', 'Автор'], ...mv.map((m) => [F.dt(m.at), SM.product(m.productId).code, SM.product(m.productId).name, SM.point(m.pointId).name, SM.MOVE_KINDS[m.kind] || m.kind, m.doc || '', m.qty, SM.user_(m.by).name])], 'Движение'); }
+        const pts = SM.activePoints().filter((p) => SM.pointVisible(p.id)); UI.exportXLSX('Остатки_' + D.todayISO(), [['Код', 'Товар', ...pts.map((p) => p.name), 'Всего', 'Резерв', 'Доступно', 'Мин.'], ...SM.db.products.map((p) => [p.code, p.name, ...pts.map((x) => SM.qty(p.id, x.id)), SM.qty(p.id), SM.reserved(p.id), SM.available(p.id), p.min])], 'Остатки'); };
     },
   });
   SM.page('receipts', {

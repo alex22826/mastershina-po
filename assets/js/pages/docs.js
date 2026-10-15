@@ -135,11 +135,15 @@
     if (tab === 'stock') {
       const pts = SM.activePoints().filter((p) => SM.pointVisible(p.id));
       const mode = r.q.m || 'all';
-      if (mode === 'low') return { title: 'Товары с нулевым или низким остатком', cols: ['Код', 'Товар', 'Остаток', 'Мин.', 'Доступно'], rows: SM.db.products.filter((p) => p.active && SM.isLow(p)).map((p) => [p.code, p.name, SM.qty(p.id), p.min, SM.available(p.id)]), num: [2, 3, 4], sw: [['all', 'По точкам'], ['value', 'В деньгах'], ['low', 'Нулевой / низкий']] };
-      if (mode === 'value') return { title: 'Остатки в деньгах (по себестоимости и ценам продажи)', cols: ['Точка', 'Единиц', 'По себестоимости, сум', 'По ценам продажи, сум'], rows: pts.map((pt) => { let u = 0, c = 0, s = 0; SM.db.products.forEach((p) => { const q = SM.qty(p.id, pt.id); if (q > 0) { u += q; c += q * SM.toUZS((p.buy || 0) + (p.extra || 0), p.buyCur || p.cur, SM.rate()); s += q * SM.toUZS(p.price, p.cur, SM.rate()); } }); return [pt.name, u, Math.round(c), Math.round(s)]; }), num: [1, 2, 3], total: true, sw: [['all', 'По точкам'], ['value', 'В деньгах'], ['low', 'Нулевой / низкий']] };
+      const sw = [['all', 'По точкам'], ['value', 'В деньгах'], ['low', 'Нулевой / низкий'], ['moves', 'Движение товара']];
+      // ТЗ 18.1: движение товара за период — поступления, перемещения, продажи, списания, возвраты, корректировки
+      if (mode === 'moves') return { title: 'Движение товара · ' + R.label, cols: ['Дата', 'Код', 'Товар', 'Точка', 'Операция', 'Документ', 'Кол-во', 'Автор'], period: true, sw, num: [6],
+        rows: SM.db.moves.filter((mv) => D.inRange(mv.at, R.from, R.to) && SM.pointVisible(mv.pointId)).sort((a, b) => String(b.at).localeCompare(String(a.at))).map((mv) => [F.dt(mv.at), SM.product(mv.productId).code, SM.product(mv.productId).name, SM.point(mv.pointId).name, SM.MOVE_KINDS[mv.kind] || mv.kind, mv.doc || '', mv.qty, SM.user_(mv.by).name]) };
+      if (mode === 'low') return { title: 'Товары с нулевым или низким остатком', cols: ['Код', 'Товар', 'Остаток', 'Мин.', 'Доступно'], rows: SM.db.products.filter((p) => p.active && SM.isLow(p)).map((p) => [p.code, p.name, SM.qty(p.id), p.min, SM.available(p.id)]), num: [2, 3, 4], sw };
+      if (mode === 'value') return { title: 'Остатки в деньгах (по себестоимости и ценам продажи)', cols: ['Точка', 'Единиц', 'По себестоимости, сум', 'По ценам продажи, сум'], rows: pts.map((pt) => { let u = 0, c = 0, s = 0; SM.db.products.forEach((p) => { const q = SM.qty(p.id, pt.id); if (q > 0) { u += q; c += q * SM.toUZS((p.buy || 0) + (p.extra || 0), p.buyCur || p.cur, SM.rate()); s += q * SM.toUZS(p.price, p.cur, SM.rate()); } }); return [pt.name, u, Math.round(c), Math.round(s)]; }), num: [1, 2, 3], total: true, sw };
       // «Всего» — по точкам, доступным пользователю (у склада — только его точки)
       const vis = (fn, pid) => SM.db.points.filter((p) => SM.pointVisible(p.id)).reduce((a, x) => a + fn(pid, x.id), 0);
-      return { title: 'Общий остаток и остатки по складам и магазинам', cols: ['Код', 'Товар', ...pts.map((p) => p.name), 'Всего', 'Резерв', 'Доступно'], rows: SM.db.products.filter((p) => p.active).map((p) => [p.code, p.name, ...pts.map((x) => SM.qty(p.id, x.id)), vis(SM.qty, p.id), vis(SM.reserved, p.id), vis(SM.available, p.id)]), num: [...pts.map((_, i) => i + 2), pts.length + 2, pts.length + 3, pts.length + 4], total: true, wide: true, sw: [['all', 'По точкам'], ['value', 'В деньгах'], ['low', 'Нулевой / низкий']] };
+      return { title: 'Общий остаток и остатки по складам и магазинам', cols: ['Код', 'Товар', ...pts.map((p) => p.name), 'Всего', 'Резерв', 'Доступно'], rows: SM.db.products.filter((p) => p.active).map((p) => [p.code, p.name, ...pts.map((x) => SM.qty(p.id, x.id)), vis(SM.qty, p.id), vis(SM.reserved, p.id), vis(SM.available, p.id)]), num: [...pts.map((_, i) => i + 2), pts.length + 2, pts.length + 3, pts.length + 4], total: true, wide: true, sw };
     }
     if (tab === 'sales') {
       const g = r.q.g || 'day';
@@ -158,7 +162,11 @@
       const pays = SM.db.payments.filter((p) => p.dir === 'in' && D.inRange(p.at, R.from, R.to));
       const m = {};
       pays.forEach((p) => { const k = SM.method(p.method).name + '|' + p.cur; const x = (m[k] = m[k] || { ok: 0, pend: 0, no: 0, uzs: 0 }); if (p.status === 'confirmed') { x.ok += p.amount; x.uzs += SM.toUZS(p.amount, p.cur, p.rate); } else if (p.status === 'pending') x.pend += p.amount; else x.no += p.amount; });
-      return { title: 'Оплаты по способам и валютам · ' + R.label, cols: ['Способ', 'Валюта', 'Подтверждено', 'На проверке', 'Отклонено', 'Подтверждено в сумах'], rows: Object.entries(m).map(([k, x]) => { const [n, c] = k.split('|'); return [n, c === 'USD' ? '$' : 'сум', x.ok, x.pend, x.no, Math.round(x.uzs)]; }), num: [2, 3, 4, 5], total: true, period: true,
+      // в Excel уходят и кассовый отчёт, и движение денежных средств за период (ТЗ 18.3)
+      const accRows = SM.ACCOUNTS.map((a) => { const x = SM.accountReport(a.id, R.from, R.to); const k = (v) => Math.round(v * 100) / 100; return [a.name, a.cur, k(x.start), k(x.inc), k(x.out), k(x.end)]; });
+      const flowRows = SM.cashFlows().filter((f) => D.inRange(f.at, R.from, R.to)).map((f) => [F.dt(f.at), f.title, f.who, SM.account(f.acc).name, f.amount, f.cur]);
+      const more = [[], ['Кассовый отчёт'], ['Счёт', 'Валюта', 'Начало', 'Приход', 'Расход', 'Конец'], ...accRows, [], ['Движение денежных средств'], ['Время', 'Операция', 'Контрагент / комментарий', 'Счёт', 'Сумма', 'Валюта'], ...flowRows];
+      return { title: 'Оплаты по способам и валютам · ' + R.label, cols: ['Способ', 'Валюта', 'Подтверждено', 'На проверке', 'Отклонено', 'Подтверждено в сумах'], rows: Object.entries(m).map(([k, x]) => { const [n, c] = k.split('|'); return [n, c === 'USD' ? '$' : 'сум', x.ok, x.pend, x.no, Math.round(x.uzs)]; }), num: [2, 3, 4, 5], total: true, period: true, more,
         extra: html`<div class="section-t">Кассовый отчёт</div><div class="table-wrap"><table class="table compact"><thead><tr><th>Счёт</th><th class="r">Начало</th><th class="r">Приход</th><th class="r">Расход</th><th class="r">Конец</th></tr></thead><tbody>${SM.ACCOUNTS.map((a) => { const x = SM.accountReport(a.id, R.from, R.to); const f = (v) => (a.cur === 'USD' ? F.usd(v) : F.m(v)); return html`<tr><td>${a.name}</td><td class="r">${f(x.start)}</td><td class="r ok-t">+${f(x.inc)}</td><td class="r bad-t">−${f(x.out)}</td><td class="r fw-8">${f(x.end)}</td></tr>`; })}</tbody></table></div>` };
     }
     if (tab === 'debts') {
@@ -171,9 +179,15 @@
     }
     if (tab === 'sellers') {
       const users = SM.db.users.filter((u) => u.role === 'seller' && (!own || u.id === SM.user.id));
-      return { title: 'Работа продавцов · ' + R.label, cols: ['Продавец', 'Продаж', 'Сумма, сум', 'Товаров, ед.', 'Клиентов', 'Наличные', 'Безнал / QR', 'Перечисление', 'Продаж в долг', 'Текущие долги клиентов, сум'], period: true, total: true, num: [1, 2, 3, 4, 5, 6, 7, 8, 9],
+      // ТЗ 18.5: погашено за период — оплаты по продажам продавца в долг, внесённые позже самой продажи,
+      // и погашения без привязки к продаже от его клиентов
+      const repaid = (u) => SM.db.payments.filter((p) => p.status === 'confirmed' && p.dir === 'in' && D.inRange(p.confirmedAt || p.at, R.from, R.to)).filter((p) => {
+        const s = p.saleId && SM.db.sales.find((x) => x.id === p.saleId);
+        return s ? s.credit && s.sellerId === u.id && D.parse(p.at) - D.parse(s.postedAt || s.createdAt) > 60000 : SM.client(p.clientId).sellerId === u.id;
+      }).reduce((a, p) => a + SM.toUZS(p.amount, p.cur, p.rate), 0);
+      return { title: 'Работа продавцов · ' + R.label, cols: ['Продавец', 'Продаж', 'Сумма, сум', 'Товаров, ед.', 'Клиентов', 'Наличные', 'Безнал / QR', 'Перечисление', 'Продаж в долг', 'Погашено долгов, сум', 'Текущие долги клиентов, сум'], period: true, total: true, num: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
         rows: users.map((u) => { const l = sales.filter((s) => s.sellerId === u.id); const pays = SM.db.payments.filter((p) => p.status === 'confirmed' && p.dir === 'in' && l.some((s) => s.id === p.saleId)); const by = (ids) => Math.round(pays.filter((p) => ids.includes(p.method)).reduce((a, p) => a + SM.toUZS(p.amount, p.cur, p.rate), 0));
-          return [u.name, l.length, Math.round(SM.sumUZS(l)), l.reduce((a, s) => a + s.items.reduce((b, x) => b + x.qty, 0), 0), new Set(l.map((s) => s.clientId)).size, by(['cash_uzs', 'cash_usd']), by(['card', 'qr', 'corp']), by(['bank']), l.filter((s) => s.credit).length, Math.round(SM.db.clients.filter((c) => c.sellerId === u.id).reduce((a, c) => a + Math.max(0, SM.balance(c.id)), 0))]; }) };
+          return [u.name, l.length, Math.round(SM.sumUZS(l)), l.reduce((a, s) => a + s.items.reduce((b, x) => b + x.qty, 0), 0), new Set(l.map((s) => s.clientId)).size, by(['cash_uzs', 'cash_usd']), by(['card', 'qr', 'corp']), by(['bank']), l.filter((s) => s.credit).length, Math.round(repaid(u)), Math.round(SM.db.clients.filter((c) => c.sellerId === u.id).reduce((a, c) => a + Math.max(0, SM.balance(c.id)), 0))]; }) };
     }
     const g = r.q.g || 'cat';
     const ex = SM.db.expenses.filter((e) => !e.cancelled && D.inRange(e.date, R.from, R.to));
@@ -184,12 +198,14 @@
     return { title: 'Расходы · ' + R.label, cols: [{ cat: 'Категория', emp: 'Сотрудник', point: 'Точка', car: 'Автомобиль' }[g], 'Операций', 'Сумма, сум'], rows: Object.entries(m).sort((a, b) => b[1][1] - a[1][1]).map(([k, v]) => [k, v[0], Math.round(v[1])]), num: [1, 2], total: true, period: true,
       sw: [['cat', 'По категориям'], ['emp', 'По сотрудникам'], ['point', 'По точкам'], ['car', 'По автомобилям']], swParam: 'g', extra: html`<p class="fs-13 muted mt-12">Стоимость доставок за период (по заявкам): <b class="text-2">${F.cur(dlv)}</b></p>` };
   }
+  const totalRow = (rep) => (rep.total && rep.rows.length ? rep.cols.map((_, i) => (i === 0 ? 'Итого' : rep.num.includes(i) ? rep.rows.reduce((a, x) => a + (+x[i] || 0), 0) : '')) : null);
+  const swLabel = (rep, r) => (rep.sw ? (rep.sw.find((x) => x[0] === (r.q[rep.swParam || 'm'] || rep.sw[0][0])) || [])[1] || '' : '');
   function reportsPage(r) {
     const tab = reportTab(r);
     const rep = buildReport(tab, r);
     const swP = rep.swParam || 'm';
     const sw = rep.sw ? html`<div class="seg">${rep.sw.map(([k, t]) => html`<button class="${(r.q[swP] || rep.sw[0][0]) === k ? 'on' : ''}" data-sw="${k}" data-swp="${swP}">${t}</button>`)}</div>` : '';
-    const tot = rep.total && rep.rows.length ? rep.cols.map((_, i) => (i === 0 ? 'Итого' : rep.num.includes(i) ? rep.rows.reduce((a, x) => a + (+x[i] || 0), 0) : '')) : null;
+    const tot = totalRow(rep);
     const cell = (v, i) => (rep.num.includes(i) && typeof v === 'number' ? F.num(v, Math.abs(v) < 1000 && v % 1 ? 2 : 0) : v);
     return html`
       ${UI.pageHead('Отчёты', 'Остатки, продажи, оплаты и касса, задолженности, работа продавцов, расходы · фильтры и выгрузка в Excel', html`<button class="btn btn-primary" data-x="export">${I('download')}Выгрузить в Excel</button>`)}
@@ -216,7 +232,9 @@
     mount(el, r) {
       UI.bindTabs(el); UI.bindPeriod(el);
       UI.$$('[data-sw]', el).forEach((b) => (b.onclick = () => SM.setQuery({ [b.dataset.swp]: b.dataset.sw }, true)));
-      el.querySelector('[data-x=export]').onclick = () => { const tab = reportTab(r), rep = buildReport(tab, r); UI.exportXLSX(rep.title.replace(/[^\wа-яё]+/gi, '_').slice(0, 60), [rep.cols, ...rep.rows], (TABS.find((t) => t[0] === tab) || [0, 'Отчёт'])[1]); };
+      // в файл — та же таблица, строка «Итого» и дополнительные блоки (у кассы — кассовый отчёт и движение денег)
+      el.querySelector('[data-x=export]').onclick = () => { const tab = reportTab(r), rep = buildReport(tab, r), tot = totalRow(rep), swl = swLabel(rep, r);
+        UI.exportXLSX((rep.title + (swl && !rep.title.includes(swl) ? ' ' + swl : '')).replace(/[^\wа-яё]+/gi, '_').slice(0, 80), [rep.cols, ...rep.rows, ...(tot ? [tot] : []), ...(rep.more || [])], (TABS.find((t) => t[0] === tab) || [0, 'Отчёт'])[1]); };
     },
   });
 })();
