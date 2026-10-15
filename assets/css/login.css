@@ -99,6 +99,26 @@
     0 0 0 3px rgba(var(--accent-rgb), .25),
     0 12px 24px rgba(0,0,0,.5);
 }
+/* Автозаполнение браузера (сохранённый логин/пароль) красит поле в светло-голубой.
+   Chrome/Edge/Safari: «замораживаем» смену фона огромной задержкой transition — фон остаётся нашим. */
+.login-card .field input:-webkit-autofill,
+.login-card .field input:-webkit-autofill:hover,
+.login-card .field input:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--text);
+  caret-color: var(--text);
+  transition: background-color 0s 600000s, color 0s 600000s,
+              border-color .15s ease, box-shadow .15s ease;
+}
+/* Firefox ставит фон автозаполнения с !important — перекрываем его внутренней тенью цвета поля */
+@supports (-moz-appearance: none) {
+  .login-card .field input:autofill {
+    -webkit-text-fill-color: var(--text);
+    box-shadow:
+      0 0 0 100px #0f0f0f inset,
+      0 10px 20px rgba(0,0,0,.45),
+      0 2px 4px rgba(0,0,0,.3);
+  }
+}
 .login-card .field .toggle-eye {
   position: absolute; right: 16px; top: 50%; transform: translateY(-50%);
   background: none; border: 0; padding: 0; margin: 0; cursor: pointer; color: var(--muted-2); display: flex;
