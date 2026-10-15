@@ -59,6 +59,10 @@
     trendUp: '<path d="m22 7-8.5 8.5-5-5L2 17"/><path d="M16 7h6v6"/>', trendDown: '<path d="m22 17-8.5-8.5-5 5L2 7"/><path d="M16 17h6v-6"/>',
     history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l4 2"/>',
     menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
+    sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+    moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
+    refresh: '<path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/>',
+    lang: '<path d="M4 5h9M8.5 3v2M6 5c1 3.5 3.5 6 6.5 7.5M11 5c-1 3.5-3.5 6-7 7.5"/><path d="m13 21 4-9 4 9M14.5 18h5"/>',
     store: '<path d="M3 9 4.5 4h15L21 9"/><path d="M3 9h18v2a3 3 0 0 1-6 0 3 3 0 0 1-6 0 3 3 0 0 1-6 0z"/><path d="M5 13v8h14v-8M10 21v-5h4v5"/>',
     warehouse: '<path d="M2 21V8l10-5 10 5v13"/><path d="M6 21v-9h12v9M6 15h12M6 18h12"/>',
     tag: '<path d="M12 2H2v10l9.3 9.3a2.4 2.4 0 0 0 3.4 0l6.6-6.6a2.4 2.4 0 0 0 0-3.4z"/><circle cx="7" cy="7" r="1.5"/>',
@@ -289,17 +293,87 @@
   });
   UI.enhance = (root = document) => { UI.enhanceSelects(root); UI.labelTables(root); };
 
-  /* ---------- Тосты ---------- */
-  UI.toast = function (title, text, kind = 'ok') {
+  /* ---------- Уведомления справа снизу ----------
+     kind: ok (подтверждение), bad (ошибка), warn (внимание), info, load (ожидание — крутится, пока не обновят).
+     opts.icon — значок события (cart — заказ, trash — удаление, download — файл, inbox — поступление, coins — расход…).
+     Возвращает {set(title, text, kind, icon), close()} — так «ожидание» превращается в «готово». */
+  const T_ICON = { ok: 'check', warn: 'alert', bad: 'alert', info: 'info', load: 'refresh' };
+  UI.toast = function (title, text, kind = 'ok', opts = {}) {
     let box = UI.$('.toasts');
     if (!box) { box = document.createElement('div'); box.className = 'toasts'; box.setAttribute('aria-live', 'polite'); document.body.appendChild(box); }
     const t = document.createElement('div');
-    t.className = 'toast ' + kind;
-    const ic = { ok: 'check', warn: 'alert', bad: 'alert', info: 'info' }[kind];
-    t.innerHTML = String(html`${I(ic)}<div class="grow"><b>${title}</b>${text ? html`<small>${text}</small>` : ''}</div>`);
+    let timer = null;
+    const close = () => { clearTimeout(timer); if (!t.isConnected) return; t.classList.add('out'); setTimeout(() => t.remove(), 280); };
+    const set = (ti, tx, k = 'ok', icon) => {
+      const ms = k === 'load' ? 0 : opts.ms || (k === 'bad' ? 6500 : 4200);
+      t.className = 'toast ' + k;
+      t.innerHTML = String(html`<span class="t-ic">${I(icon || (k === 'load' ? 'refresh' : opts.icon && k === kind ? opts.icon : T_ICON[k]))}</span><div class="grow"><b>${ti}</b>${tx ? html`<small>${tx}</small>` : ''}</div><button class="t-x" aria-label="Закрыть">${I('x')}</button><i class="t-bar" style="animation-duration:${ms || 1400}ms"></i>`);
+      t.querySelector('.t-x').onclick = close;
+      clearTimeout(timer);
+      if (ms) {
+        // на паузе, пока над уведомлением курсор
+        let left = ms, started = Date.now();
+        const arm = () => { timer = setTimeout(close, left); started = Date.now(); };
+        t.onmouseenter = () => { clearTimeout(timer); left -= Date.now() - started; };
+        t.onmouseleave = arm;
+        arm();
+      }
+    };
+    set(title, text, kind, opts.icon);
     box.appendChild(t);
-    setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 260); }, kind === 'bad' ? 6000 : 3800);
+    // не больше 4 уведомлений одновременно
+    while (box.children.length > 4) box.firstElementChild.remove();
+    return { set, close, el: t };
   };
+  /* выполнить действие с уведомлением «ждём…» → «готово» / «ошибка» */
+  UI.task = async function (title, text, fn, { done = 'Готово', icon } = {}) {
+    const t = UI.toast(title, text, 'load');
+    try { const r = await fn(); t.set(r && r.title || done, r && r.text || '', 'ok', icon); return r; }
+    catch (e) { t.set('Не получилось', e.message || String(e), 'bad'); throw e; }
+  };
+
+  /* ---------- Поля сумм: разделение разрядов «1 450 000» и предел ----------
+     <input data-money data-max="763000" data-dec="2">: лишние символы не вводятся,
+     больше data-max ввести нельзя (поле мигает и подсказывает предел). */
+  UI.num = (v) => { const n = parseFloat(String(v == null ? '' : v).replace(/[\s ]/g, '').replace(',', '.')); return isFinite(n) ? n : 0; };
+  UI.fmtInput = (n, dec) => { if (n === '' || n == null) return ''; const [i, f] = String(n).split('.'); return i.replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + (f != null ? ',' + f.slice(0, dec) : ''); };
+  UI.moneyAttrs = (max, dec = 0) => raw('data-money inputmode="decimal" autocomplete="off"' + (max != null ? ' data-max="' + Math.max(0, Math.round(max * 100) / 100) + '"' : '') + (dec ? ' data-dec="' + dec + '"' : ''));
+  UI.setMoney = (el, v) => { el.value = v === '' || v == null ? '' : UI.fmtInput(Math.round(v * 100) / 100, +(el.dataset.dec || 0)); };
+  UI.setMax = (el, max) => { if (max == null) delete el.dataset.max; else el.dataset.max = Math.max(0, Math.round(max * 100) / 100); };
+  const LIMIT = 999999999999; // защита от «бесконечных» чисел
+  let flashT = 0;
+  document.addEventListener('input', (e) => {
+    const el = e.target;
+    if (!el.matches || !el.matches('input[data-money]')) return;
+    const dec = +(el.dataset.dec || 0);
+    const caretDigits = el.value.slice(0, el.selectionStart).replace(/[^\d.,]/g, '').length;
+    let raw2 = el.value.replace(/[^\d.,]/g, '').replace(',', '.');
+    const dot = raw2.indexOf('.');
+    if (dot >= 0) raw2 = raw2.slice(0, dot + 1) + raw2.slice(dot + 1).replace(/\./g, '').slice(0, dec);
+    if (!dec) raw2 = raw2.split('.')[0];
+    raw2 = raw2.replace(/^0+(?=\d)/, '');
+    const max = el.dataset.max != null ? Math.min(+el.dataset.max, LIMIT) : LIMIT;
+    if (raw2 !== '' && +raw2 > max) {
+      raw2 = String(Math.round(max * 100) / 100);
+      el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
+      if (Date.now() - flashT > 2500 && el.dataset.max != null) { flashT = Date.now(); UI.toast('Больше нельзя', 'Максимум для этого поля: ' + UI.fmtInput(raw2, dec), 'warn', { icon: 'alert', ms: 2600 }); }
+    }
+    const out = UI.fmtInput(raw2, dec);
+    if (out !== el.value) {
+      el.value = out;
+      // курсор остаётся после той же цифры
+      let pos = 0, seen = 0;
+      while (pos < out.length && seen < caretDigits) { if (/[\d,]/.test(out[pos])) seen++; pos++; }
+      try { el.setSelectionRange(pos, pos); } catch (err) { /* поле без выделения */ }
+    }
+  }, true);
+  /* количество и проценты: тоже не больше max */
+  document.addEventListener('input', (e) => {
+    const el = e.target;
+    if (!el.matches || !el.matches('input[type=number]')) return;
+    if (el.max !== '' && +el.value > +el.max) { el.value = el.max; el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); }
+    if (el.min !== '' && el.value !== '' && +el.value < +el.min) el.value = el.min;
+  }, true);
 
   /* ---------- Окна ---------- */
   const stack = [];
@@ -352,6 +426,16 @@
       onClose: () => { if (!done) res(false); } });
     m.querySelector('[data-ok]').onclick = () => { done = true; UI.closeTop(); res(true); };
   });
+  /* переспрос перед удалением: красная корзина, «Удалить безвозвратно» */
+  UI.confirmDelete = (title, text) => new Promise((res) => {
+    let done = false;
+    const m = UI.modal({ title, size: 'narrow', body: html`<div class="row nowrap" style="align-items:flex-start;gap:14px"><span class="note-ic bad" style="width:46px;height:46px;border-radius:14px">${I('trash')}</span><p class="text-2" style="margin-top:4px">${text}</p></div>`,
+      foot: html`<button class="btn btn-ghost" data-close>Отмена</button><button class="btn btn-danger" data-ok>${I('trash')}Удалить</button>`,
+      onClose: () => { if (!done) res(false); } });
+    m.querySelector('[data-ok]').onclick = () => { done = true; UI.closeTop(); res(true); };
+  });
+  /* карандаш и корзина в строке таблицы */
+  UI.actBtns = (id, { edit = true, del = true, editTip = 'Изменить', delTip = 'Удалить' } = {}) => html`<span class="act-btns">${edit ? html`<button type="button" class="act-btn" data-edit="${id}" data-tip="${editTip}" aria-label="${editTip}">${I('edit')}</button>` : ''}${del ? html`<button type="button" class="act-btn del" data-del="${id}" data-tip="${delTip}" aria-label="${delTip}">${I('trash')}</button>` : ''}</span>`;
   /* окно с обязательной причиной (отмены, отклонения — ТЗ 21) */
   UI.prompt = (title, text, { label = 'Причина', ok = 'Сохранить', danger = false, placeholder = 'Опишите причину — запись попадёт в историю операций' } = {}) => new Promise((res) => {
     let done = false;
@@ -413,7 +497,7 @@
   document.addEventListener('mouseover', (e) => {
     let el = e.target.closest && e.target.closest('[data-tip]');
     // подписи разделов в «рельсе» нужны только на сенсорном планшете: с мышью сайдбар раскрывается сам
-    if (el && el.dataset.tipRail && !matchMedia('(min-width: 721px) and (max-width: 1280px) and (hover: none)').matches) el = null;
+    if (el && el.dataset.tipRail && !matchMedia('(min-width: 721px) and (hover: none)').matches) el = null;
     if (el && el !== tipFor) { tipFor = el; showTipFor(el); }
     else if (!el && tipFor) hideTip();
   });
@@ -476,7 +560,7 @@
         const pts = se.values.map((v, i) => [x(i), y(v || 0)]);
         if (spec.area) s += `<path d="M${pts[0][0]},${y(0)} ${pts.map((p) => 'L' + p[0] + ',' + p[1]).join(' ')} L${pts[pts.length - 1][0]},${y(0)}Z" fill="${se.color}" opacity=".12"/>`;
         s += `<path class="${animate ? 'line-path' : ''}" style="--len:${Math.round(iw * 2)}" d="${pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ')}" fill="none" stroke="${se.color}" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>`;
-        pts.forEach((p) => (s += `<circle cx="${p[0]}" cy="${p[1]}" r="3" fill="#0f1013" stroke="${se.color}" stroke-width="2"/>`));
+        pts.forEach((p) => (s += `<circle class="c-dot" cx="${p[0]}" cy="${p[1]}" r="3" stroke="${se.color}" stroke-width="2"/>`));
       });
     } else {
       const groups = stacked ? 1 : series.length;
@@ -536,7 +620,7 @@
       off += len;
       return el;
     }).join('');
-    return raw(`<svg class="donut" width="${size}" height="${size}" viewBox="0 0 160 160" aria-hidden="true"><circle r="${R}" cx="80" cy="80" fill="none" stroke="rgba(255,255,255,.05)" stroke-width="18"/>${segs}<text x="80" y="76" text-anchor="middle" fill="#f4f4f5" style="font:800 17px var(--font)">${SM.esc(value)}</text><text x="80" y="96" text-anchor="middle" fill="#8f8f99" style="font:700 11px var(--font)">${SM.esc(label)}</text></svg>`);
+    return raw(`<svg class="donut" width="${size}" height="${size}" viewBox="0 0 160 160" aria-hidden="true"><circle class="d-bg" r="${R}" cx="80" cy="80" fill="none" stroke-width="18"/>${segs}<text class="d-v" x="80" y="76" text-anchor="middle">${SM.esc(value)}</text><text class="d-l" x="80" y="96" text-anchor="middle">${SM.esc(label)}</text></svg>`);
   };
   UI.segBar = function (parts, { fmt = (v) => F.cur(v), height = 12 } = {}) {
     const sum = parts.reduce((s, p) => s + p.value, 0) || 1;
@@ -572,6 +656,7 @@
   };
   /* rows: массив массивов, первая строка — заголовки */
   UI.exportXLSX = async function (name, rows, sheet = 'Отчёт') {
+    const t = UI.toast('Готовим файл Excel…', name + '.xlsx · ' + (rows.length - 1) + ' строк', 'load');
     try {
       const X = await UI.loadXLSX();
       const ws = X.utils.aoa_to_sheet(rows);
@@ -579,18 +664,20 @@
       const wb = X.utils.book_new();
       X.utils.book_append_sheet(wb, ws, sheet.slice(0, 30));
       X.writeFile(wb, name + '.xlsx');
-      UI.toast('Файл Excel сохранён', name + '.xlsx');
+      t.set('Файл Excel скачан', name + '.xlsx', 'ok', 'download');
     } catch (e) {
       // без интернета — CSV, который тоже открывается в Excel
       const csv = '﻿' + rows.map((r) => r.map((v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"').join(';')).join('\r\n');
       UI.download(name + '.csv', csv, 'text/csv;charset=utf-8');
-      UI.toast('Сохранено в CSV', 'Модуль Excel недоступен — файл CSV открывается в Excel', 'warn');
+      t.set('Сохранено в CSV', 'Модуль Excel недоступен — файл CSV открывается в Excel', 'warn', 'download');
     }
   };
 
   /* ---------- Печать документа ---------- */
   UI.docCSS = `body{font:13px/1.45 Arial,sans-serif;color:#111;margin:24px 30px}h1{font-size:18px;text-align:center;margin:6px 0 14px}table{width:100%;border-collapse:collapse;margin:10px 0}th,td{border:1px solid #333;padding:5px 7px;font-size:12px;vertical-align:top}th{background:#f0f0f0}.doc-r{text-align:right}.doc-head{display:flex;justify-content:space-between;gap:20px;font-size:12px}.doc-sign{display:flex;justify-content:space-between;gap:30px;margin-top:34px}.doc-sign div{flex:1;border-top:1px solid #333;padding-top:4px;font-size:11px}.muted{color:#666}@page{size:A4;margin:12mm}`;
   UI.printDoc = function (title, bodyHTML) {
+    const t = UI.toast('Готовим документ к печати…', title, 'load');
+    setTimeout(() => t.set('Документ отправлен на печать', title + ' · можно сохранить в PDF в окне печати', 'ok', 'print'), 700);
     const f = document.createElement('iframe');
     f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0';
     document.body.appendChild(f);
@@ -602,6 +689,6 @@
   UI.saveDoc = function (name, title, bodyHTML) {
     const doc = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8"><title>' + SM.esc(title) + '</title><style>' + UI.docCSS + '</style></head><body>' + bodyHTML + '</body></html>';
     UI.download(name + '.doc', '﻿' + doc, 'application/msword');
-    UI.toast('Документ сохранён', name + '.doc');
+    UI.toast('Документ скачан', name + '.doc · открывается в Word', 'ok', { icon: 'download' });
   };
 })();

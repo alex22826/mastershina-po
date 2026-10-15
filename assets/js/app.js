@@ -1,6 +1,6 @@
 /* =========================================================
-   SM AVTO BASE — оболочка: сайдбар, верхняя панель, нижняя
-   навигация, маршруты, проверка прав, общие элементы страниц
+   SM AVTO BASE — оболочка: сайдбар-«рельс», верхняя панель,
+   тема по времени, язык, плашка обновления, маршруты, поиск
    ========================================================= */
 (function () {
   'use strict';
@@ -9,6 +9,94 @@
   const I = UI.icon;
   SM.pages = {};
   SM.page = (key, def) => (SM.pages[key] = def);
+  // версия сборки: когда на сайте выкладывают новую, version.json отличается — показываем плашку «обновите страницу»
+  SM.APP_VERSION = '2026-10-15.4';
+
+  /* ---------- Тема: светлая 8:00–18:00, тёмная 18:00–8:00; вручную — до следующего переключения ---------- */
+  const OVR = 'sm.themeOverride';
+  SM.theme = () => document.documentElement.getAttribute('data-theme') || 'dark';
+  SM.themeAuto = (d = new Date()) => (d.getHours() >= 8 && d.getHours() < 18 ? 'light' : 'dark');
+  SM.nextThemeSwitch = (d = new Date()) => { const t = new Date(d), h = d.getHours(); if (h < 8) t.setHours(8, 0, 0, 0); else if (h < 18) t.setHours(18, 0, 0, 0); else { t.setDate(t.getDate() + 1); t.setHours(8, 0, 0, 0); } return t.getTime(); };
+  SM.themeWanted = () => { try { const o = JSON.parse(localStorage.getItem(OVR) || 'null'); if (o && o.until > Date.now()) return o.theme; } catch (e) { /* без хранилища — по времени */ } return SM.themeAuto(); };
+  SM.themeTip = () => (SM.theme() === 'dark' ? 'Тёмная тема' : 'Светлая тема') + (SM.theme() === SM.themeAuto() ? ' · по времени' : ' · вручную до ' + (SM.themeAuto() === 'light' ? '18:00' : '8:00')) + '\nСама: светлая с 8:00, тёмная с 18:00';
+  SM.applyTheme = function (t, origin) {
+    const root = document.documentElement;
+    if (SM.theme() === t) return;
+    const flip = () => {
+      root.setAttribute('data-theme', t);
+      document.querySelectorAll('meta[name=theme-color]').forEach((m) => m.setAttribute('content', t === 'dark' ? '#0b0c0f' : '#f2f3f7'));
+      document.querySelectorAll('[data-act=theme]').forEach((b) => { b.innerHTML = String(I(t === 'dark' ? 'sun' : 'moon')); b.setAttribute('data-tip', SM.themeTip()); });
+    };
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (document.startViewTransition && !reduce) {
+      // новая тема раскрывается «волной» от кнопки (или сверху, если сменилась по времени)
+      const x = origin ? origin.x : innerWidth / 2, y = origin ? origin.y : 0;
+      const R = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
+      const vt = document.startViewTransition(flip);
+      vt.ready.then(() => root.animate({ clipPath: ['circle(0px at ' + x + 'px ' + y + 'px)', 'circle(' + R + 'px at ' + x + 'px ' + y + 'px)'] }, { duration: origin ? 750 : 1300, easing: 'cubic-bezier(.4, 0, .2, 1)', pseudoElement: '::view-transition-new(root)' })).catch(() => {});
+    } else { root.classList.add('theme-fade'); flip(); setTimeout(() => root.classList.remove('theme-fade'), 700); }
+  };
+  SM.toggleTheme = function (origin) {
+    const t = SM.theme() === 'dark' ? 'light' : 'dark';
+    try { if (t === SM.themeAuto()) localStorage.removeItem(OVR); else localStorage.setItem(OVR, JSON.stringify({ theme: t, until: SM.nextThemeSwitch() })); } catch (e) { /* без хранилища */ }
+    SM.applyTheme(t, origin);
+    UI.toast(t === 'dark' ? 'Тёмная тема' : 'Светлая тема', t === SM.themeAuto() ? 'Как положено по времени' : 'До ' + (t === 'dark' ? '8:00' : '18:00') + ', потом — снова по времени', 'info', { icon: t === 'dark' ? 'moon' : 'sun', ms: 2600 });
+  };
+  SM.startThemeClock = () => setInterval(() => { const w = SM.themeWanted(); if (w !== SM.theme()) SM.applyTheme(w); }, 30000);
+
+  /* ---------- Язык: русский, узбекский (латиница), узбекский (кириллица) ---------- */
+  SM.LANGS = [['ru', 'RU', 'Русский'], ['uz', 'UZ', "O'zbekcha"], ['uzc', 'ЎЗ', 'Ўзбекча']];
+  SM.lang = () => { try { const l = localStorage.getItem('ms_lang'); return SM.LANGS.some((x) => x[0] === l) ? l : 'ru'; } catch (e) { return 'ru'; } };
+  SM.setLang = function (l) {
+    if (l === SM.lang()) return;
+    const body = document.body;
+    body.classList.add('lang-out');
+    setTimeout(() => {
+      try { localStorage.setItem('ms_lang', l); } catch (e) { /* без хранилища */ }
+      if (SM.i18n) SM.i18n.set(l);
+      SM.refresh();
+      body.classList.remove('lang-out');
+      body.classList.add('lang-in');
+      setTimeout(() => body.classList.remove('lang-in'), 400);
+      UI.toast(l === 'ru' ? 'Язык: русский' : l === 'uz' ? "Til: o'zbekcha" : 'Тил: ўзбекча', '', 'info', { icon: 'lang', ms: 2200 });
+    }, 230);
+  };
+  function langMenu(btn) {
+    const old = UI.$('.menu-pop');
+    if (old) { old.remove(); return; }
+    const p = document.createElement('div');
+    p.className = 'menu-pop';
+    p.setAttribute('role', 'menu');
+    p.innerHTML = SM.LANGS.map(([k, code, name]) => '<button type="button" role="menuitemradio" class="' + (SM.lang() === k ? 'on' : '') + '" data-lang="' + k + '" translate="no"><span class="code">' + code + '</span><span>' + name + '<small>' + { ru: 'кириллица', uz: 'lotin yozuvi', uzc: 'кирилл ёзуви' }[k] + '</small></span>' + String(I('check', 'ck')) + '</button>').join('');
+    document.body.appendChild(p);
+    const r = btn.getBoundingClientRect();
+    p.style.top = r.bottom + 8 + 'px';
+    p.style.left = Math.max(8, Math.min(r.right - p.offsetWidth, innerWidth - p.offsetWidth - 8)) + 'px';
+    p.addEventListener('click', (e) => { const b = e.target.closest('[data-lang]'); if (b) { p.remove(); SM.setLang(b.dataset.lang); } });
+    setTimeout(() => document.addEventListener('mousedown', function off(e) { if (!p.contains(e.target) && !btn.contains(e.target)) { p.remove(); document.removeEventListener('mousedown', off); } }), 0);
+  }
+
+  /* ---------- Плашка «сайт обновился» (новая версия на сервере) ---------- */
+  let updShown = false;
+  SM.checkUpdate = async function () {
+    if (updShown || location.protocol === 'file:') return;
+    try {
+      const r = await fetch('version.json?_=' + Date.now(), { cache: 'no-store' });
+      if (!r.ok) return;
+      const v = (await r.json()).v;
+      if (v && v !== SM.APP_VERSION) showUpdate();
+    } catch (e) { /* нет сети — проверим позже */ }
+  };
+  function showUpdate() {
+    updShown = true;
+    const b = document.createElement('div');
+    b.className = 'update-bar';
+    b.setAttribute('role', 'status');
+    b.innerHTML = String(html`<i></i><span>На сайт внесены изменения — обновите страницу</span><button class="btn btn-primary btn-sm" data-x="reload">${I('refresh')}Обновить</button><button class="btn btn-icon btn-sm" data-x="hide" aria-label="Скрыть">${I('x')}</button>`);
+    document.body.appendChild(b);
+    b.querySelector('[data-x=reload]').onclick = () => location.reload();
+    b.querySelector('[data-x=hide]').onclick = () => b.remove();
+  }
 
   /* ---------- Маршрут: #/раздел/id?параметры ---------- */
   SM.route = function () {
@@ -54,8 +142,6 @@
     else { const n = sales.filter((s) => ['draft', 'await', 'partial'].includes(SM.saleStatus(s))).length; if (n) c.sales = { n }; }
     const dn = SM.db.deliveries.filter((d) => d.status === 'new').length;
     if (dn) c.delivery = { n: dn, bad: u.role === 'courier' };
-    const tn = SM.db.transfers.filter((t) => t.status === 'sent' && SM.pointVisible(t.to)).length;
-    if (tn) c.transfers = { n: tn };
     const low = SM.lowStock().length;
     if (low) c.stock = { n: low, bad: true };
     const un = SM.unread().length;
@@ -72,48 +158,38 @@
       if (!g) groups.push((g = { name: s.group, items: [] }));
       g.items.push(s);
     });
-    const pts = u.points && u.points.length ? u.points.map((p) => SM.point(p).name).join(', ') : 'Все магазины и склады';
     const prev = UI.$('#sidebar .sb-nav');
     const keep = prev ? prev.scrollTop : 0;
     UI.$('#sidebar').innerHTML = String(html`<div class="sb-in">
-      <a class="sb-brand" href="#/${SM.homeKey()}">${UI.logoMark()}<span><b>SM <em>AVTO BASE</em></b><small>Учётная система</small></span></a>
-      <div class="sb-point" data-tip="${pts}" data-tip-pos="right" data-tip-rail="1">${I('store')}<span>${pts}</span></div>
-      <nav class="sb-nav">${groups.map((g) => html`<div class="sb-group"><span>${g.name}</span>${g.items.map((s) => html`
-        <a class="sb-link ${active === s.key ? 'active' : ''}" href="#/${s.key}" data-tip="${s.title}" data-tip-pos="right" data-tip-rail="1" ${active === s.key ? raw('aria-current="page"') : ''}>${I(s.icon)}<span>${s.title}</span>${cnt[s.key] ? html`<span class="sb-count ${cnt[s.key].bad ? 'bad' : ''}">${SM.capCount(cnt[s.key].n)}</span>` : ''}</a>`)}</div>`)}</nav>
-      <div class="sb-user">${UI.avatar(u.name, u.id)}<div class="who"><b>${u.name}</b><small>${SM.roleOf(u).title}</small></div><button class="btn btn-icon btn-sm" data-act="logout" data-tip="Выйти" aria-label="Выйти">${I('logout')}</button></div></div>`);
+      <a class="sb-brand" href="#/${SM.homeKey()}" aria-label="SM AVTO BASE">${UI.logoMark()}<span class="sb-fade"><b>SM <em>AVTO BASE</em></b><small>Учётная система</small></span></a>
+      <nav class="sb-nav">${groups.map((g) => html`<div class="sb-group"><span class="sb-fade">${g.name}</span>${g.items.map((s) => html`
+        <a class="sb-link ${active === s.key ? 'active' : ''}" href="#/${s.key}" data-tip="${s.title}" data-tip-pos="right" data-tip-rail="1" ${active === s.key ? raw('aria-current="page"') : ''}><span class="tile">${I(s.icon)}</span><span class="sb-fade">${s.title}</span>${cnt[s.key] ? html`<span class="sb-count ${cnt[s.key].bad ? 'bad' : ''}">${SM.capCount(cnt[s.key].n)}</span>` : ''}</a>`)}</div>`)}</nav>
+      <div class="sb-user">${UI.avatar(u.name, u.id)}<div class="who sb-fade"><b>${u.name}</b><small>${SM.roleOf(u).title}</small></div><button class="btn btn-icon btn-sm sb-fade" data-act="logout" data-tip="Выйти" aria-label="Выйти">${I('logout')}</button></div></div>`);
     const nav = UI.$('#sidebar .sb-nav');
     nav.scrollTop = keep;
     const act = nav.querySelector('.sb-link.active');
     if (act) { const a = act.getBoundingClientRect(), n = nav.getBoundingClientRect(); if (a.top < n.top || a.bottom > n.bottom) act.scrollIntoView({ block: 'nearest' }); }
-    nav.addEventListener('scroll', sbEdges, { passive: true });
-    sbEdges();
   }
-  // мягкое затухание у края меню, пока его можно прокрутить
-  function sbEdges() {
-    const nav = UI.$('#sidebar .sb-nav');
-    if (!nav) return;
-    nav.classList.toggle('more-up', nav.scrollTop > 2);
-    nav.classList.toggle('more-down', nav.scrollTop + nav.clientHeight < nav.scrollHeight - 2);
-  }
-  addEventListener('resize', sbEdges, { passive: true });
 
   function topbar(sec, title) {
     const un = SM.unread().length;
     const r = SM.rateRow();
+    const lang = SM.LANGS.find((x) => x[0] === SM.lang());
     UI.$('#topbar').innerHTML = String(html`
-      <button class="btn btn-icon burger" data-act="nav-open" aria-label="Меню">${I('menu')}</button>
+      <button class="tb-btn burger" data-act="nav-open" aria-label="Меню">${I('menu')}</button>
       <div class="crumbs"><small>${sec ? sec.group : ''}</small><b>${title}</b></div>
       <div class="spacer"></div>
-      <label class="tb-search input-icon">${I('search')}<input class="input" id="gsearch" placeholder="Товар, клиент, № продажи" autocomplete="off" aria-label="Поиск"><kbd>/</kbd></label>
-      <button class="btn btn-icon tb-find" data-act="search" aria-label="Поиск">${I('search')}</button>
-      <button class="rate-chip" data-act="rate" data-tip="${'Курс $ на ' + F.dt(r.at) + '\nналичный ' + F.num(r.cash) + ' · безналичный ' + F.num(r.card) + ' · перечисление ' + F.num(r.bank)}"><i></i><span class="rc-l">$ </span><b>${F.num(r.cash)}</b></button>
-      <button class="btn btn-icon bell" data-act="alerts" data-tip="Уведомления" aria-label="Уведомления${un ? ': ' + un : ''}">${I('bell')}${un ? html`<span class="bell-n">${SM.capCount(un)}</span>` : ''}</button>
+      <button class="tb-btn" data-act="search" data-tip="Поиск: товар, клиент, № продажи (клавиша /)" aria-label="Поиск">${I('search')}</button>
+      <button class="tb-btn tb-rate" data-act="rate" data-tip="${'Курс $ на ' + F.dt(r.at) + '\nналичный ' + F.num(r.cash) + ' · безналичный ' + F.num(r.card) + ' · перечисление ' + F.num(r.bank)}"><i class="live"></i><span class="rc-l">$</span><b>${F.num(r.cash)}</b></button>
+      <button class="tb-btn tb-lang" data-act="lang" aria-label="Язык" data-tip="Язык интерфейса" translate="no">${I('globe')}<span class="lc">${lang[1]}</span></button>
+      <button class="tb-btn theme-btn" data-act="theme" data-tip="${SM.themeTip()}" aria-label="Сменить тему">${I(SM.theme() === 'dark' ? 'sun' : 'moon')}</button>
+      <button class="tb-btn bell" data-act="alerts" data-tip="Уведомления" aria-label="Уведомления${un ? ': ' + un : ''}">${I('bell')}${un ? html`<span class="bell-n">${SM.capCount(un)}</span>` : ''}</button>
       ${SM.can('sales', 2) ? html`<a class="btn btn-primary btn-sm tb-new" href="#/sales/new">${I('plus')}Продажа</a>` : ''}`);
   }
 
   /* ---------- Нижняя навигация на телефоне ---------- */
   const BNAV = { admin: ['dashboard', 'sales', 'products', 'cash'], head: ['dashboard', 'sales', 'debts', 'reports'], seller: ['dashboard', 'sales', 'products', 'clients'],
-    storekeeper: ['dashboard', 'stock', 'receipts', 'transfers'], accountant: ['dashboard', 'accounting', 'cash', 'debts'], courier: ['dashboard', 'delivery', 'notifications'] };
+    storekeeper: ['dashboard', 'stock', 'receipts', 'sales'], accountant: ['dashboard', 'accounting', 'cash', 'debts'], courier: ['dashboard', 'delivery', 'notifications'] };
   function bnav(active, cnt) {
     const pref = (BNAV[SM.user.role] || []).filter((k) => SM.can(k));
     const items = pref.concat(SM.SECTIONS.map((s) => s.key).filter((k) => SM.can(k) && !pref.includes(k))).slice(0, 4);
@@ -126,7 +202,7 @@
   SM.render = function (quiet) {
     const r = SM.route();
     let key = r.key;
-    if (!key || !SM.pages[key]) key = SM.homeKey();
+    if (!key || !SM.pages[key] || !SM.section(key)) key = SM.homeKey();
     const sec = SM.section(key);
     const page = SM.pages[key];
     const cnt = counts();
@@ -151,7 +227,7 @@
     if (page.mount) page.mount(pg, r);
     UI.drawCharts(view, changed && !quiet);
     if (changed && !quiet) UI.countUp(view);
-    document.title = title + ' · SM AVTO BASE';
+    document.title = (SM.i18n ? SM.i18n.tr(title) : title) + ' · SM AVTO BASE';
   };
   /* обновить страницу и переоткрыть карточку после изменения данных */
   SM.refresh = function () {
@@ -182,7 +258,7 @@
     p.style.top = r.bottom + 8 + 'px';
     p.style.right = Math.max(8, innerWidth - r.right) + 'px';
     const rb = p.querySelector('[data-x=readall]');
-    if (rb) rb.onclick = (e) => { e.stopPropagation(); SM.ops.markRead(); p.remove(); SM.render(true); UI.toast('Уведомления прочитаны'); };
+    if (rb) rb.onclick = (e) => { e.stopPropagation(); SM.ops.markRead(); p.remove(); SM.render(true); UI.toast('Уведомления прочитаны', '', 'ok', { icon: 'bell' }); };
     setTimeout(() => document.addEventListener('click', function off(e) { if (!p.contains(e.target) || e.target.closest('a')) { p.remove(); document.removeEventListener('click', off); } }), 0);
   }
 
@@ -199,7 +275,7 @@
   };
   function searchModal(initial) {
     const m = UI.modal({ title: 'Поиск по системе', sub: 'Код, название или альтернативное название товара · клиент, телефон, ИНН · номер продажи',
-      body: html`<div class="input-icon">${I('search')}<input class="input input-lg" id="msearch" placeholder="Например: 205/55 R16, колодки нексия, СП-0003" autocomplete="off" enterkeyhint="search" autofocus></div><div id="msres" class="mt-12"></div>` });
+      body: html`<div class="input-icon">${I('search')}<input class="input input-lg" id="msearch" placeholder="Например: 205/55 R16, колодки нексия, СП-0002" autocomplete="off" enterkeyhint="search" autofocus></div><div id="msres" class="mt-12"></div>` });
     const inp = m.querySelector('#msearch');
     const box = m.querySelector('#msres');
     const draw = () => {
@@ -228,6 +304,8 @@
         if (act === 'logout') { SM.logout(); location.replace('index.html'); }
         else if (act === 'search') searchModal();
         else if (act === 'alerts') { e.stopPropagation(); alertsPop(a); }
+        else if (act === 'lang') { e.stopPropagation(); langMenu(a); }
+        else if (act === 'theme') { const r = a.getBoundingClientRect(); UI.hideTip(); SM.toggleTheme({ x: r.left + r.width / 2, y: r.top + r.height / 2 }); }
         else if (act === 'rate') SM.go('#/rates');
         else if (act === 'nav-open') document.body.classList.add('nav-open');
         else if (act === 'nav-close') document.body.classList.remove('nav-open');
@@ -249,12 +327,12 @@
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === '/' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && !UI.layers()) { e.preventDefault(); searchModal(); }
-      if (e.key === 'Enter' && e.target.id === 'gsearch') { const v = e.target.value; e.target.value = ''; searchModal(v); }
+      if (e.key === 'Escape') document.body.classList.remove('nav-open');
     });
-    document.addEventListener('input', (e) => { if (e.target.id === 'gsearch' && e.target.value.length >= 2) { const v = e.target.value; e.target.value = ''; e.target.blur(); searchModal(v); } });
     addEventListener('hashchange', () => { UI.closeAll(); UI.closeSelect(); document.body.classList.remove('nav-open'); SM._drawer = null; SM.render(); window.scrollTo(0, 0); });
     // данные поменяли в другой вкладке — перечитываем
     addEventListener('storage', (e) => { if (e.key === SM.DB_KEY && e.newValue) { SM.load(); SM.user = SM.currentUser(); if (!SM.user) location.replace('index.html'); else SM.refresh(); } });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) { SM.checkUpdate(); const w = SM.themeWanted(); if (w !== SM.theme()) SM.applyTheme(w); } });
   }
 
   /* ---------- Общие элементы страниц ---------- */
@@ -283,12 +361,17 @@
 
   /* ---------- Запуск ---------- */
   SM.boot = function () {
+    document.documentElement.setAttribute('data-theme', SM.themeWanted());
     SM.load();
     SM.user = SM.currentUser();
     if (!SM.user) { location.replace('index.html'); return; }
     shell();
     bindGlobal();
+    if (SM.i18n) SM.i18n.set(SM.lang());
     SM.render();
+    SM.startThemeClock();
+    SM.checkUpdate();
+    setInterval(SM.checkUpdate, 60000);
     // колокольчик «звенит», если есть непрочитанные
     if (SM.unread().length) setTimeout(() => { const b = UI.$('.bell'); if (b) b.classList.add('ring'); }, 900);
   };

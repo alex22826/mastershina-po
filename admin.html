@@ -3,24 +3,36 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#060708">
+  <meta name="theme-color" content="#0b0c0f">
   <title>SM AVTO BASE</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
-  <link rel="preload" href="assets/fonts/manrope-cyr.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/admin.css?v=3">
+  <script>
+    /* тема до отрисовки, чтобы не мигало: светлая 8:00–18:00, иначе тёмная; ручной выбор — до следующего переключения */
+    (function () {
+      var h = new Date().getHours(), t = h >= 8 && h < 18 ? 'light' : 'dark';
+      try { var o = JSON.parse(localStorage.getItem('sm.themeOverride') || 'null'); if (o && o.until > Date.now()) t = o.theme; } catch (e) {}
+      document.documentElement.setAttribute('data-theme', t);
+      var m = document.querySelector('meta[name=theme-color]'); if (m) m.setAttribute('content', t === 'dark' ? '#0b0c0f' : '#f2f3f7');
+      try { var l = localStorage.getItem('ms_lang'); if (l === 'uz' || l === 'uzc') document.documentElement.lang = l === 'uz' ? 'uz' : 'uz-Cyrl'; } catch (e) {}
+    })();
+  </script>
+  <link rel="preload" href="assets/fonts/onest-cyr.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/css/admin.css?v=4">
 </head>
 <body>
   <noscript>Для работы системы включите JavaScript.</noscript>
-  <script src="assets/js/core.js?v=3"></script>
-  <script src="assets/js/data.js?v=3"></script>
-  <script src="assets/js/ui.js?v=3"></script>
-  <script src="assets/js/app.js?v=3"></script>
-  <script src="assets/js/pages/dashboard.js?v=3"></script>
-  <script src="assets/js/pages/sales.js?v=3"></script>
-  <script src="assets/js/pages/stock.js?v=3"></script>
-  <script src="assets/js/pages/money.js?v=3"></script>
-  <script src="assets/js/pages/docs.js?v=3"></script>
-  <script src="assets/js/pages/admin.js?v=3"></script>
+  <script src="assets/js/core.js?v=4"></script>
+  <script src="assets/js/data.js?v=4"></script>
+  <script src="assets/js/ui.js?v=4"></script>
+  <script src="assets/js/lang-uz.js?v=4"></script>
+  <script src="assets/js/i18n-admin.js?v=4"></script>
+  <script src="assets/js/app.js?v=4"></script>
+  <script src="assets/js/pages/dashboard.js?v=4"></script>
+  <script src="assets/js/pages/sales.js?v=4"></script>
+  <script src="assets/js/pages/stock.js?v=4"></script>
+  <script src="assets/js/pages/money.js?v=4"></script>
+  <script src="assets/js/pages/docs.js?v=4"></script>
+  <script src="assets/js/pages/admin.js?v=4"></script>
   <script>SM.boot();</script>
 </body>
 </html>

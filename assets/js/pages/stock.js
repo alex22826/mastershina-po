@@ -29,14 +29,15 @@
         <button class="btn btn-secondary" data-x="export">${I('download')}Excel</button>
         ${edit ? html`<button class="btn btn-primary" data-x="new">${I('plus')}Товар</button>` : ''}`)}
       <div class="card"><div class="card-h">${UI.searchInput(r.q.q, '205/55 R16, колодки нексия, SM-00013, 1C-010211…')}${UI.filterSelect('cat', cat, catOptions(), 'Все категории')}${UI.filterSelect('st', st, [['active', 'Активные'], ['off', 'Отключённые'], ['all', 'Все статусы']])}<span class="right muted fs-13 fw-7">${list.length} ${F.plural(list.length, 'позиция', 'позиции', 'позиций')}</span></div>
-        <div class="card-b" style="padding-top:12px">${list.length ? html`<div class="table-wrap"><table class="table"><thead><tr><th>Товар</th><th>Категория</th><th>Характеристики</th><th class="r">Себестоимость</th><th class="r">Цена</th><th class="r">Остаток</th></tr></thead><tbody>
+        <div class="card-b" style="padding-top:12px">${list.length ? html`<div class="table-wrap"><table class="table"><thead><tr><th>Товар</th><th>Категория</th><th>Характеристики</th><th class="r">Себестоимость</th><th class="r">Цена</th><th class="r">Остаток</th><th></th></tr></thead><tbody>
           ${list.map((p) => { const qn = SM.qty(p.id), av = SM.available(p.id); return html`<tr class="click ${p.active ? '' : 'row-muted'}" data-act="open-product" data-id="${p.id}">
             <td><div class="row nowrap">${UI.thumb(p)}<div style="min-width:0"><span class="cell-title">${p.name}</span><span class="cell-sub"><span class="mono">${p.code}</span> · старый ${p.oldCode}</span></div></div></td>
             <td><span class="cell-title fw-6">${SM.category(p.cat).name}</span><span class="cell-sub">${p.brand}</span></td>
             <td>${attrChips(p)}</td>
             <td class="r nowrap">${F.cur(costOf(p), p.buyCur || p.cur)}</td>
             <td class="r nowrap"><b>${F.cur(p.price, p.cur)}</b>${p.cur === 'USD' ? html`<span class="cell-sub">≈ ${F.short(priceUZS(p))} сум</span>` : ''}</td>
-            <td class="r nowrap"><span class="stock-cell ${qn <= 0 ? 'zero' : SM.isLow(p) ? 'low' : ''}">${qn} ${p.unit}</span>${av !== qn ? html`<span class="cell-sub">доступно ${av}</span>` : ''}</td></tr>`; })}</tbody></table></div>` : UI.empty('Товары не найдены', 'Попробуйте часть названия или кода', 'search')}</div></div>`;
+            <td class="r nowrap"><span class="stock-cell ${qn <= 0 ? 'zero' : SM.isLow(p) ? 'low' : ''}">${qn} ${p.unit}</span>${av !== qn ? html`<span class="cell-sub">доступно ${av}</span>` : ''}</td>
+            <td class="td-act">${edit ? UI.actBtns(p.id, { editTip: 'Изменить товар', delTip: 'Удалить товар' }) : ''}</td></tr>`; })}</tbody></table></div>` : UI.empty('Товары не найдены', 'Попробуйте часть названия или кода', 'search')}</div></div>`;
   }
   SM.openProduct = function (id) {
     const p = SM.product(id);
@@ -64,13 +65,21 @@
     const btn = [];
     if (SM.can('products', 2)) btn.push(html`<button class="btn btn-primary" data-x="edit">${I('edit')}Изменить</button>`);
     if (SM.can('stock', 2)) btn.push(html`<button class="btn btn-secondary" data-x="adjust">${I('sliders')}Списание / корректировка</button>`);
-    if (SM.can('products', 2)) btn.push(html`<button class="btn btn-ghost" data-x="toggle">${p.active ? 'Отключить' : 'Включить'}</button>`);
+    if (SM.can('products', 2)) btn.push(html`<button class="btn btn-ghost" data-x="toggle">${p.active ? 'Отключить' : 'Включить'}</button>`, html`<button class="btn btn-danger" data-x="delete">${I('trash')}Удалить</button>`);
     const dr = UI.drawer({ title: p.name, sub: SM.category(p.cat).name + ' · ' + p.brand, body, foot: btn.length ? html`${btn}` : null, size: 'wide' });
     SM.trackDrawer(SM.openProduct, [id], dr, '#/products');
     const on = (s, fn) => { const b = dr.querySelector(s); if (b) b.onclick = fn; };
     on('[data-x=edit]', () => productForm(p));
     on('[data-x=adjust]', () => adjustModal(p.id));
-    on('[data-x=toggle]', () => { p.active = !p.active; SM.log(p.active ? 'Товар включён' : 'Товар отключён', 'product', p.id, p.name); SM.save(); UI.toast(p.active ? 'Товар включён' : 'Товар отключён', p.name); SM.refresh(); });
+    on('[data-x=toggle]', () => { p.active = !p.active; SM.log(p.active ? 'Товар включён' : 'Товар отключён', 'product', p.id, p.name); SM.save(); UI.toast(p.active ? 'Товар включён' : 'Товар отключён', p.name, 'info', { icon: 'tag' }); SM.refresh(); });
+    on('[data-x=delete]', () => SM.deleteProductAsk(p));
+  };
+  /* удаление товара: только если он не участвовал в продажах и поступлениях (остатки удаляются вместе с ним) */
+  SM.deleteProductAsk = async function (p) {
+    const n = SM.productLinks(p.id);
+    if (n) return UI.toast('Нельзя удалить товар', p.name + ' есть в документах (' + n + '). Его можно отключить — он пропадёт из подбора', 'bad', { icon: 'lock' });
+    if (!(await UI.confirmDelete('Удалить товар?', p.name + ' (' + p.code + ') и его остатки (' + SM.qty(p.id) + ' ' + p.unit + ') будут удалены без возможности восстановления.'))) return;
+    SM.ops.deleteProduct(p); UI.closeAll(); UI.toast('Товар удалён', p.code + ' · ' + p.name, 'ok', { icon: 'trash' }); SM.refresh();
   };
   function productForm(p) {
     p = p || { cat: 'c-t-summer', unit: 'шт', cur: 'UZS', buyCur: 'UZS', vat: 12, min: 4, attrs: {}, alt: [], active: true };
@@ -93,10 +102,10 @@
           <div class="field"><label>Модель</label><input class="input" name="model" value="${a.model || ''}"></div>
           <div class="field"><label>Индекс нагрузки/скорости</label><input class="input" name="index" value="${a.index || ''}" placeholder="91V"></div></div>
         <div class="field full other-box"><label>Характеристики</label><textarea class="textarea" name="attrs" placeholder="OEM: 96879797&#10;Подходит для: Nexia, Cobalt">${Object.entries(a).map(([k, v]) => (ATTR_NAMES[k] || k) + ': ' + v).join('\n')}</textarea></div>
-        <div class="field"><label>Закупочная цена</label><input class="input num" type="number" name="buy" min="0" step="any" value="${p.buy || ''}"></div>
-        <div class="field"><label>Доп. расходы на ед.</label><input class="input num" type="number" name="extra" min="0" step="any" value="${p.extra || 0}"></div>
+        <div class="field"><label>Закупочная цена</label><input class="input" name="buy" ${UI.moneyAttrs(null, 2)} value="${p.buy ? UI.fmtInput(p.buy, 2) : ''}"></div>
+        <div class="field"><label>Доп. расходы на ед.</label><input class="input" name="extra" ${UI.moneyAttrs(null, 2)} value="${UI.fmtInput(p.extra || 0, 2)}"></div>
         <div class="field"><label>Валюта закупки</label><select class="select" name="buyCur">${UI.options([['UZS', 'Сум'], ['USD', '$']], p.buyCur || 'UZS')}</select></div>
-        <div class="field"><label>Цена продажи <span class="req">*</span></label><input class="input num" type="number" name="price" min="0" step="any" value="${p.price || ''}"></div>
+        <div class="field"><label>Цена продажи <span class="req">*</span></label><input class="input" name="price" ${UI.moneyAttrs(null, 2)} value="${p.price ? UI.fmtInput(p.price, 2) : ''}"></div>
         <div class="field"><label>Валюта продажи</label><select class="select" name="cur">${UI.options([['UZS', 'Сум'], ['USD', '$']], p.cur)}</select></div>
         <div class="field"><label>НДС</label><select class="select" name="vat">${UI.options([['12', '12%'], ['0', 'Без НДС']], String(p.vat))}</select></div>
         <div class="field full"><label>Фото</label><input class="input" type="file" name="photo" accept="image/*" style="padding-top:9px"><span class="hint">В демо фото не загружается на сервер — показывается значок категории</span></div>
@@ -108,7 +117,8 @@
     m.querySelector('[data-ok]').onclick = () => {
       const d = UI.formData(f);
       if (!d.name) return UI.invalid(f, 'name', 'Укажите наименование');
-      if (!(+d.price > 0)) return UI.invalid(f, 'price', 'Укажите цену продажи');
+      d.price = UI.num(d.price); d.buy = UI.num(d.buy); d.extra = UI.num(d.extra);
+      if (!(d.price > 0)) return UI.invalid(f, 'price', 'Укажите цену продажи');
       const tire = SM.catRoot(d.cat).id === 'c-tires';
       let attrs = {};
       if (tire) { attrs = { size: d.width && d.profile && d.radius ? d.width + '/' + d.profile + ' ' + d.radius : '', width: d.width, profile: d.profile, radius: d.radius, season: d.season, model: d.model, index: d.index }; }
@@ -118,7 +128,7 @@
       if (dup) return UI.toast('Такой товар уже есть', dup.code + ' · ' + dup.name, 'bad');
       const saved = SM.ops.saveProduct({ id: p.id, name: d.name, alt: d.alt ? d.alt.split(',').map((s) => s.trim()).filter(Boolean) : [], cat: d.cat, maker: d.maker, brand: d.brand, oldCode: d.oldCode, unit: d.unit, min: +d.min || 0,
         attrs, buy: +d.buy || 0, extra: +d.extra || 0, buyCur: d.buyCur, price: +d.price, cur: d.cur, vat: +d.vat, comment: d.comment, active: p.active !== false });
-      UI.closeTop(); UI.toast('Товар сохранён', saved.code + ' · ' + saved.name); SM.refresh();
+      UI.closeTop(); UI.toast(p.id ? 'Товар изменён' : 'Товар добавлен', saved.code + ' · ' + saved.name, 'ok', { icon: 'tire' }); SM.refresh();
     };
   }
 
@@ -241,6 +251,37 @@
       UI.closeTop(); UI.toast(d.kind === 'writeoff' ? 'Списано' : 'Остаток скорректирован', SM.product(pid).name + ': ' + (q > 0 ? '+' : '') + q); SM.refresh();
     };
   }
+  /* карандаш в остатках: поставить точное количество на точке (разница уходит корректировкой) */
+  function stockEditModal(pid) {
+    const p = SM.product(pid);
+    const pts = SM.userPoints().map((id) => SM.point(id)).filter((x) => x.active);
+    const m = UI.modal({ title: 'Изменить остаток', sub: p.name + ' · ' + p.code, size: 'narrow',
+      body: html`<form class="stack" style="gap:12px" autocomplete="off">
+        <div class="field"><label>Магазин или склад</label><select class="select" name="pointId">${UI.options(pts.map((x) => [x.id, x.name + ' · сейчас ' + SM.qty(pid, x.id) + ' ' + p.unit]), pts[0] && pts[0].id)}</select></div>
+        <div class="field"><label>Новый остаток, ${p.unit} <span class="req">*</span></label><input class="input num" type="number" name="qty" min="0" max="100000" step="1" autofocus><span class="hint" data-h></span></div>
+        <div class="field"><label>Причина <span class="req">*</span></label><input class="input" name="reason" placeholder="Например: пересчёт на складе"></div></form>`,
+      foot: html`<button class="btn btn-ghost" data-close>Отмена</button><button class="btn btn-primary" data-ok>${I('check')}Сохранить</button>` });
+    const f = m.querySelector('form');
+    const sync = () => { f.qty.value = SM.qty(pid, f.pointId.value); m.querySelector('[data-h]').textContent = 'Сейчас: ' + SM.qty(pid, f.pointId.value) + ' ' + p.unit + ', в резерве ' + SM.reserved(pid, f.pointId.value); };
+    f.pointId.addEventListener('change', sync); sync();
+    m.querySelector('[data-ok]').onclick = () => {
+      const d = UI.formData(f);
+      if (d.qty === '' || +d.qty < 0) return UI.invalid(f, 'qty', 'Укажите количество (0 и больше)');
+      if (!d.reason) return UI.invalid(f, 'reason', 'Укажите причину — запись попадёт в историю');
+      const diff = SM.ops.setStock(pid, d.pointId, +d.qty, d.reason);
+      UI.closeTop();
+      UI.toast(diff ? 'Остаток изменён' : 'Остаток не изменился', p.name + ' · ' + SM.point(d.pointId).name + ': ' + d.qty + ' ' + p.unit + (diff ? ' (' + (diff > 0 ? '+' : '') + diff + ')' : ''), diff ? 'ok' : 'info', { icon: 'layers' });
+      SM.refresh();
+    };
+  }
+  /* корзина в остатках: обнулить товар на всех доступных точках */
+  async function stockClearAsk(pid) {
+    const p = SM.product(pid), pts = SM.userPoints().filter((id) => SM.qty(pid, id) > 0);
+    if (!pts.length) return UI.toast('Остаток уже нулевой', p.name, 'info', { icon: 'layers' });
+    if (!(await UI.confirmDelete('Обнулить остаток?', p.name + ': ' + pts.map((id) => SM.point(id).name + ' — ' + SM.qty(pid, id) + ' ' + p.unit).join(', ') + '. Товар останется в справочнике, списание попадёт в историю движения.'))) return;
+    pts.forEach((id) => SM.ops.setStock(pid, id, 0, 'Обнуление остатка'));
+    UI.toast('Остаток обнулён', p.name, 'ok', { icon: 'trash' }); SM.refresh();
+  }
   function stockPage(r) {
     const tab = r.q.tab || 'stock', q = (r.q.q || '').toLowerCase(), cat = r.q.cat || '', pt = r.q.pt || '', low = r.q.low === '1';
     const pts = SM.activePoints().filter((p) => SM.pointVisible(p.id));
@@ -262,9 +303,9 @@
     const cols = pt ? [SM.point(pt)] : pts;
     return html`${head}${UI.tabs([['stock', 'Остатки'], ['moves', 'Движение товара']], tab)}
       <div class="card"><div class="card-h">${UI.searchInput(r.q.q, 'Код, название, размер')}${UI.filterSelect('cat', cat, catOptions(), 'Все категории')}${UI.filterSelect('pt', pt, pts.map((p) => [p.id, p.name]), 'Все точки')}<label class="switch right"><input type="checkbox" data-x="low" ${low ? 'checked' : ''}><i></i>Только низкий остаток</label></div>
-        <div class="card-b" style="padding-top:12px">${prods.length ? html`<div class="table-wrap"><table class="table compact matrix ${cols.length > 2 ? 'no-stack' : ''}"><thead><tr><th style="text-align:left">Товар</th>${cols.map((p) => html`<th title="${p.address}">${p.name.replace('Магазин ', '').replace(/[«»]/g, '')}</th>`)}<th>Всего</th><th>Резерв</th><th>Доступно</th></tr></thead><tbody>
+        <div class="card-b" style="padding-top:12px">${prods.length ? html`<div class="table-wrap"><table class="table compact matrix ${cols.length > 2 ? 'no-stack' : ''}"><thead><tr><th style="text-align:left">Товар</th>${cols.map((p) => html`<th title="${p.address}">${p.name.replace('Магазин ', '').replace(/[«»]/g, '')}</th>`)}<th>Всего</th><th>Резерв</th><th>Доступно</th>${SM.can('stock', 2) ? html`<th></th>` : ''}</tr></thead><tbody>
           ${prods.map((p) => { const tot = pt ? SM.qty(p.id, pt) : SM.qty(p.id), rs = pt ? SM.reserved(p.id, pt) : SM.reserved(p.id); return html`<tr class="click ${SM.isLow(p) ? 'row-warn' : ''}" data-act="open-product" data-id="${p.id}"><td style="min-width:240px"><span class="cell-title">${p.name}</span><span class="cell-sub"><span class="mono">${p.code}</span> · мин. ${p.min}</span></td>
-            ${cols.map((c) => { const v = SM.qty(p.id, c.id); return html`<td class="stock-cell ${v <= 0 ? 'zero' : ''}">${v}</td>`; })}<td class="stock-cell ${SM.isLow(p) ? 'low' : ''}">${tot}</td><td class="c">${rs || html`<span class="muted">—</span>`}</td><td class="c fw-8">${tot - rs}</td></tr>`; })}</tbody></table></div>` : UI.empty('Ничего не найдено', '', 'layers')}</div></div>`;
+            ${cols.map((c) => { const v = SM.qty(p.id, c.id); return html`<td class="stock-cell ${v <= 0 ? 'zero' : ''}">${v}</td>`; })}<td class="stock-cell ${SM.isLow(p) ? 'low' : ''}">${tot}</td><td class="c">${rs || html`<span class="muted">—</span>`}</td><td class="c fw-8">${tot - rs}</td>${SM.can('stock', 2) ? html`<td class="td-act">${UI.actBtns(p.id, { editTip: 'Изменить остаток', delTip: 'Обнулить остаток' })}</td>` : ''}</tr>`; })}</tbody></table></div>` : UI.empty('Ничего не найдено', '', 'layers')}</div></div>`;
   }
 
   /* ---------- Поступления (ТЗ 7) ---------- */
@@ -274,11 +315,11 @@
     const st = { items: [], files: [] };
     const m = UI.modal({ title: 'Новое поступление', sub: 'После проведения остатки на выбранном складе увеличатся, цены продажи обновятся в карточках', size: 'xl',
       body: html`<form autocomplete="off"><div class="form-grid g3">
-        <div class="field"><label>Поставщик <span class="req">*</span></label><select class="select" name="supplierId">${UI.options(suppliers.map((c) => [c.id, c.name]), '', 'Выберите поставщика')}</select></div>
+        <div class="field"><label>Поставщик <span class="req">*</span></label><div class="row nowrap"><div class="grow"><select class="select" name="supplierId">${UI.options(suppliers.map((c) => [c.id, c.name]), '', suppliers.length ? 'Выберите поставщика' : 'Поставщиков нет — добавьте')}</select></div><button type="button" class="btn btn-secondary btn-icon" data-x="new-sup" data-tip="Новый поставщик" aria-label="Новый поставщик">${I('plus')}</button></div></div>
         <div class="field"><label>Склад назначения</label><select class="select" name="pointId">${UI.options(pts.map((p) => [p.id, p.name]), (pts.find((p) => p.type === 'warehouse') || pts[0] || {}).id)}</select></div>
         <div class="field"><label>Дата</label><input class="input" type="date" name="date" value="${D.todayISO()}"></div>
         <div class="field"><label>Валюта</label><select class="select" name="cur">${UI.options([['UZS', 'Сум'], ['USD', '$ США']], 'UZS')}</select></div>
-        <div class="field"><label>Курс $</label><input class="input num" type="number" name="rate" value="${SM.rate('bank')}" step="any"></div>
+        <div class="field"><label>Курс $</label><input class="input" name="rate" ${UI.moneyAttrs(100000, 2)} value="${UI.fmtInput(SM.rate('bank'))}"></div>
         <label class="switch" style="align-self:end;margin-bottom:10px"><input type="checkbox" name="vat" checked><i></i>С НДС ${SM.vatCfg().rate}%</label></div>
         <div class="section-t">Товары</div><div id="rcPick"></div>
         <div class="table-wrap mt-12"><table class="table compact no-stack"><thead><tr><th>Товар</th><th class="r" style="width:90px">Кол-во</th><th class="r" style="width:120px">Закупка</th><th class="r" style="width:110px">Доп. расходы</th><th class="r" style="width:120px">Цена продажи</th><th class="r">Себестоимость</th><th></th></tr></thead><tbody id="rcLines"></tbody></table></div>
@@ -289,24 +330,29 @@
     const cur = () => f.cur.value;
     const draw = () => {
       m.querySelector('#rcLines').innerHTML = st.items.length ? st.items.map((l, i) => { const p = SM.product(l.productId); return String(html`<tr data-i="${i}"><td><span class="cell-title">${p.name}</span><span class="cell-sub mono">${p.code}</span></td>
-        <td><input class="input input-sm num" type="number" min="1" data-k="qty" value="${l.qty}"></td><td><input class="input input-sm num" type="number" min="0" step="any" data-k="buy" value="${l.buy}"></td>
-        <td><input class="input input-sm num" type="number" min="0" step="any" data-k="extra" value="${l.extra}"></td><td><input class="input input-sm num" type="number" min="0" step="any" data-k="price" value="${l.price}"></td>
+        <td><input class="input input-sm num" type="number" min="1" data-k="qty" value="${l.qty}"></td><td><input class="input input-sm" ${UI.moneyAttrs(null, 2)} data-k="buy" value="${UI.fmtInput(l.buy, 2)}"></td>
+        <td><input class="input input-sm" ${UI.moneyAttrs(null, 2)} data-k="extra" value="${UI.fmtInput(l.extra, 2)}"></td><td><input class="input input-sm" ${UI.moneyAttrs(null, 2)} data-k="price" value="${UI.fmtInput(l.price, 2)}"></td>
         <td class="r nowrap fw-8" data-cost>${F.cur(l.buy + l.extra, cur())}</td><td><button type="button" class="btn btn-icon btn-sm" data-del="${i}">${I('x')}</button></td></tr>`); }).join('') : '<tr><td colspan="7">' + String(UI.empty('Добавьте товары через поиск', '', 'inbox')) + '</td></tr>';
       tot();
     };
     const tot = () => { const c = SM.receiptCalc({ items: st.items, vat: f.vat.checked }); m.querySelector('#rcTot').innerHTML = String(html`<div class="row"><span>Позиций</span><b>${st.items.length}</b></div>${f.vat.checked ? html`<div class="row"><span>НДС ${SM.vatCfg().rate}%</span><b>${F.cur(c.vat, cur())}</b></div>` : ''}<div class="row"><span>Доп. расходы</span><b>${F.cur(c.extra, cur())}</b></div><div class="row grand"><span>Сумма поставщику</span><b>${F.cur(c.total, cur())}</b></div>`); };
-    SM.productPicker(m.querySelector('#rcPick'), { point: () => f.pointId.value, onPick: (p) => { if (!st.items.some((l) => l.productId === p.id)) { const k = (v, c) => Math.round(SM.conv(v, c || 'UZS', cur(), +f.rate.value) * 100) / 100; st.items.push({ productId: p.id, qty: 1, buy: k(p.buy, p.buyCur), extra: k(p.extra || 0, p.buyCur), price: k(p.price, p.cur) }); } draw(); } });
-    m.querySelector('#rcLines').addEventListener('input', (e) => { const k = e.target.dataset.k; if (!k) return; const tr = e.target.closest('tr'), l = st.items[+tr.dataset.i]; l[k] = +e.target.value || 0; if (k !== 'qty') delete l.src; tr.querySelector('[data-cost]').textContent = F.cur(l.buy + l.extra, cur()); tot(); });
+    SM.productPicker(m.querySelector('#rcPick'), { point: () => f.pointId.value, onPick: (p) => { if (!st.items.some((l) => l.productId === p.id)) { const k = (v, c) => Math.round(SM.conv(v, c || 'UZS', cur(), UI.num(f.rate.value)) * 100) / 100; st.items.push({ productId: p.id, qty: 1, buy: k(p.buy, p.buyCur), extra: k(p.extra || 0, p.buyCur), price: k(p.price, p.cur) }); } draw(); } });
+    m.querySelector('#rcLines').addEventListener('input', (e) => { const k = e.target.dataset.k; if (!k) return; const tr = e.target.closest('tr'), l = st.items[+tr.dataset.i]; l[k] = k === 'qty' ? +e.target.value || 0 : UI.num(e.target.value); if (k !== 'qty') delete l.src; tr.querySelector('[data-cost]').textContent = F.cur(l.buy + l.extra, cur()); tot(); });
     m.querySelector('#rcLines').addEventListener('click', (e) => { const d = e.target.closest('[data-del]'); if (d) { st.items.splice(+d.dataset.del, 1); draw(); } });
     // смена валюты пересчитывает уже введённые цены по курсу документа — иначе «1 450 000 сум» станут «$1 450 000»
     // считаем всегда от исходных цен строки (src), чтобы туда-обратно не копилась погрешность округления
     let prevCur = cur();
     f.cur.addEventListener('change', () => {
-      const rt = +f.rate.value || SM.rate('bank');
+      const rt = UI.num(f.rate.value) || SM.rate('bank');
       st.items.forEach((l) => { const src = l.src || (l.src = { cur: prevCur, buy: l.buy, extra: l.extra, price: l.price }); ['buy', 'extra', 'price'].forEach((k) => (l[k] = src.cur === cur() ? src[k] : Math.round(SM.conv(src[k], src.cur, cur(), rt) * 100) / 100)); });
       prevCur = cur(); draw();
     });
     f.vat.addEventListener('change', tot);
+    // поставщика можно завести прямо из поступления
+    m.querySelector('[data-x=new-sup]').onclick = () => SM.clientForm({ kind: 'supplier', type: 'legal' }, (c) => {
+      f.supplierId.insertAdjacentHTML('beforeend', String(html`<option value="${c.id}">${c.name}</option>`));
+      f.supplierId.value = c.id;
+    });
     draw();
     const save = (post) => {
       const d = UI.formData(f);
@@ -314,8 +360,8 @@
       if (!st.items.length) return UI.toast('Добавьте товары', '', 'warn');
       if (st.items.some((l) => !(l.qty > 0))) return UI.toast('Проверьте количество', '', 'warn');
       const files = Array.from(f.files.files || []).map((x) => x.name);
-      const rc = SM.ops.saveReceipt({ date: d.date, supplierId: d.supplierId, pointId: d.pointId, cur: d.cur, rate: +d.rate, vat: d.vat, items: st.items.map(({ src, ...l }) => l), comment: d.comment, files }, post);
-      UI.closeTop(); UI.toast(post ? 'Поступление проведено' : 'Черновик сохранён', rc.no + (post ? ' · остатки увеличены' : '')); SM.go('#/receipts/' + rc.id);
+      const rc = SM.ops.saveReceipt({ date: d.date, supplierId: d.supplierId, pointId: d.pointId, cur: d.cur, rate: UI.num(d.rate), vat: d.vat, items: st.items.map(({ src, ...l }) => l), comment: d.comment, files }, post);
+      UI.closeTop(); UI.toast(post ? 'Поступление проведено' : 'Черновик сохранён', rc.no + ' · ' + SM.client(rc.supplierId).name + (post ? ' · остатки увеличены' : ''), 'ok', { icon: 'inbox' }); SM.go('#/receipts/' + rc.id);
     };
     m.querySelector('[data-x=draft]').onclick = () => save(false);
     m.querySelector('[data-x=post]').onclick = () => save(true);
@@ -425,6 +471,8 @@
       const on = (s, fn) => { const b = el.querySelector(s); if (b) b.onclick = fn; };
       on('[data-x=new]', () => productForm(null));
       on('[data-x=import]', importModal);
+      UI.$$('[data-edit]', el).forEach((b) => (b.onclick = (e) => { e.stopPropagation(); productForm(SM.product(b.dataset.edit)); }));
+      UI.$$('[data-del]', el).forEach((b) => (b.onclick = (e) => { e.stopPropagation(); SM.deleteProductAsk(SM.product(b.dataset.del)); }));
       on('[data-x=export]', () => UI.exportXLSX('Товары_' + D.todayISO(), [['Код', 'Код старой программы', 'Наименование', 'Альтернативные названия', 'Категория', 'Производитель', 'Бренд', 'Ед.', 'Закупка', 'Доп. расходы', 'Валюта закупки', 'Цена', 'Валюта', 'НДС, %', 'Остаток', 'Доступно', 'Активен'],
         ...SM.db.products.map((p) => [p.code, p.oldCode, p.name, (p.alt || []).join(', '), SM.category(p.cat).name, p.maker, p.brand, p.unit, p.buy, p.extra, p.buyCur, p.price, p.cur, p.vat, SM.qty(p.id), SM.available(p.id), p.active ? 'да' : 'нет'])], 'Товары'));
       if (r.id) SM.openProduct(r.id);
@@ -436,6 +484,8 @@
       UI.bindSearch(el); UI.bindFilters(el); UI.bindTabs(el); UI.bindPeriod(el);
       const lw = el.querySelector('[data-x=low]'); if (lw) lw.onchange = () => SM.setQuery({ low: lw.checked ? '1' : '' }, true);
       const a = el.querySelector('[data-x=adjust]'); if (a) a.onclick = () => adjustModal(null);
+      UI.$$('[data-edit]', el).forEach((b) => (b.onclick = (e) => { e.stopPropagation(); stockEditModal(b.dataset.edit); }));
+      UI.$$('[data-del]', el).forEach((b) => (b.onclick = (e) => { e.stopPropagation(); stockClearAsk(b.dataset.del); }));
       el.querySelector('[data-x=export]').onclick = () => {
         // на вкладке «Движение товара» выгружается движение с теми же фильтрами, что на экране
         if (r.q.tab === 'moves') { const R = SM.periodRange(r.q.p || 'month'), q = (r.q.q || '').toLowerCase().split(/\s+/).filter(Boolean);

@@ -89,7 +89,7 @@
   /* ---------- Хранилище ---------- */
   const DB_KEY = 'sm.db.v1';
   const SESSION_KEY = 'sm.session';
-  SM.DB_VERSION = 1;
+  SM.DB_VERSION = 2; // 2 — упрощённые демо-данные (2 контрагента, 2 продажи, 5 товаров)
   SM.DB_KEY = DB_KEY;
   let memo = {};
 
@@ -188,7 +188,6 @@
     { key: 'products', title: 'Товары', group: 'Склад', icon: 'tire', short: 'Товары' },
     { key: 'stock', title: 'Остатки', group: 'Склад', icon: 'layers', short: 'Остатки' },
     { key: 'receipts', title: 'Поступления', group: 'Склад', icon: 'inbox', short: 'Приход' },
-    { key: 'transfers', title: 'Перемещения', group: 'Склад', icon: 'repeat', short: 'Перемещ.' },
     { key: 'cash', title: 'Касса и банк', group: 'Финансы', icon: 'wallet', short: 'Касса' },
     { key: 'accounting', title: 'Бухгалтерия', group: 'Финансы', icon: 'calc', short: 'Бухгалт.' },
     { key: 'expenses', title: 'Расходы', group: 'Финансы', icon: 'coins', short: 'Расходы' },
@@ -226,7 +225,7 @@
       flags: { credit: true, ownOnly: true }, discountMax: 10,
     },
     storekeeper: {
-      title: 'Сотрудник склада', desc: 'Приём, перемещение, списание и отгрузка; заявки и остатки по своим складам',
+      title: 'Сотрудник склада', desc: 'Приём, списание и отгрузка; заявки и остатки по своим складам',
       perms: L({ dashboard: 1, notifications: 1, sales: 1, delivery: 1, products: 2, stock: 2, receipts: 2, transfers: 2, documents: 1, reports: 1 }),
       flags: { ship: true }, discountMax: 0,
     },
@@ -457,11 +456,8 @@
     });
     return { start, inc, out, end: start + inc - out };
   };
-  SM.EXP_CATS_DEFAULT = [
-    { id: 'food', name: 'Питание сотрудников' }, { id: 'advance', name: 'Авансы' }, { id: 'carfix', name: 'Ремонт автомобилей' },
-    { id: 'fuel', name: 'Топливо' }, { id: 'delivery', name: 'Доставка' }, { id: 'house', name: 'Хозяйственные расходы' },
-    { id: 'rent', name: 'Аренда' }, { id: 'other', name: 'Прочие операционные' },
-  ];
+  // пока одна категория — «Расходы компании», а на что потрачено, пишут текстом
+  SM.EXP_CATS_DEFAULT = [{ id: 'company', name: 'Расходы компании' }];
   SM.expCat = (id) => byId(SM.db.expCats, id) || { id, name: id };
 
   /* ---------- Доставка (ТЗ 15) ---------- */
@@ -507,6 +503,8 @@
     const isNew = !data.id;
     const s = isNew ? { id: SM.uid('s'), no: SM.nextNo('СП'), createdAt: new Date().toISOString(), state: 'draft', history: [] } : SM.db.sales.find((x) => x.id === data.id);
     const wasDraft = s.state === 'draft';
+    // изменение проведённой (ещё не отгруженной) продажи: старые строки возвращаются на склад, новые списываются
+    const repost = !isNew && s.state === 'posted' && !s.shippedAt ? { items: s.items.map((l) => Object.assign({}, l)), pointId: s.pointId } : null;
     Object.assign(s, { date: data.date, clientId: data.clientId, sellerId: data.sellerId || me().id, pointId: data.pointId, items: data.items, docDisc: +data.docDisc || 0,
       cur: data.cur, rateType: data.rateType, rate: +data.rate, vat: !!data.vat, vatCfg: SM.vatSnap(), receive: data.receive, credit: !!data.credit, due: data.credit ? data.due : null, comment: data.comment || '', source: data.source || s.source || 'office' });
     if (isNew) SM.db.sales.push(s);
@@ -518,6 +516,11 @@
       s.items.forEach((l) => SM.addMove(l.productId, s.pointId, -l.qty, 'sale', s.no));
       s.history.push({ at: s.postedAt, uid: me().id, text: 'Проведена, товар списан с точки «' + SM.point(s.pointId).name + '»' });
       SM.notify('sale', 'Новая продажа ' + s.no, SM.client(s.clientId).name + ' · ' + F.cur(SM.saleCalc(s).total, s.cur), '#/sales/' + s.id, ['admin', 'head', 'storekeeper']);
+    }
+    if (repost) {
+      repost.items.forEach((l) => SM.addMove(l.productId, repost.pointId, l.qty, 'return', 'Изменение ' + s.no));
+      s.items.forEach((l) => SM.addMove(l.productId, s.pointId, -l.qty, 'sale', 'Изменение ' + s.no));
+      s.history.push({ at: new Date().toISOString(), uid: me().id, text: 'Изменён состав — остатки пересчитаны' });
     }
     // оплаты, указанные при оформлении — уходят бухгалтеру на подтверждение (ТЗ 11.2)
     (data.payments || []).filter((p) => p.amount > 0).forEach((p) => ops.addPayment(s, p, true));
@@ -699,6 +702,45 @@
     SM.log('Сформирован документ', 'doc', doc.id, SM.DOC_TYPES[type].name + ' ' + doc.no);
     SM.save();
     return doc;
+  };
+  /* ---------- Удаление (с переспросом в интерфейсе). След остаётся в истории операций ---------- */
+  // продажа: не отгруженный товар возвращается на склад; оплаты, доставка и документы продажи удаляются вместе с ней
+  ops.deleteSale = function (s) {
+    if (s.state === 'posted' && !s.shippedAt) s.items.forEach((l) => SM.addMove(l.productId, s.pointId, l.qty, 'return', 'Удаление ' + s.no));
+    SM.db.payments = SM.db.payments.filter((p) => p.saleId !== s.id);
+    SM.db.deliveries = SM.db.deliveries.filter((d) => d.saleId !== s.id);
+    SM.db.documents = SM.db.documents.filter((d) => d.saleId !== s.id);
+    SM.db.sales = SM.db.sales.filter((x) => x.id !== s.id);
+    SM.notify('cancel', 'Удалена продажа ' + s.no, SM.client(s.clientId).name + ' · ' + F.cur(SM.saleCalc(s).total, s.cur), '#/history', ['admin', 'head', 'accountant']);
+    SM.log('Удалена продажа', 'sale', null, s.no + ' · ' + SM.client(s.clientId).name);
+    SM.save();
+  };
+  // что мешает удалить контрагента / товар (связанные операции)
+  SM.clientLinks = (id) => SM.db.sales.filter((s) => s.clientId === id).length + SM.db.receipts.filter((r) => r.supplierId === id).length + SM.db.payments.filter((p) => p.clientId === id && !p.saleId).length;
+  SM.productLinks = (id) => SM.db.sales.filter((s) => s.items.some((l) => l.productId === id)).length + SM.db.receipts.filter((r) => r.items.some((l) => l.productId === id)).length + SM.db.transfers.filter((t) => t.items.some((l) => l.productId === id)).length;
+  ops.deleteClient = function (c) {
+    SM.db.clients = SM.db.clients.filter((x) => x.id !== c.id);
+    SM.db.documents = SM.db.documents.filter((d) => d.clientId !== c.id);
+    SM.log('Удалён контрагент', 'client', null, c.name); SM.save();
+  };
+  ops.deleteProduct = function (p) {
+    SM.db.moves = SM.db.moves.filter((m) => m.productId !== p.id);
+    SM.db.products = SM.db.products.filter((x) => x.id !== p.id);
+    SM.log('Удалён товар', 'product', null, p.code + ' · ' + p.name); SM.save();
+  };
+  ops.deleteUser = function (u) {
+    SM.db.users = SM.db.users.filter((x) => x.id !== u.id);
+    SM.log('Удалён пользователь', 'user', null, u.name + ' · ' + u.login); SM.save();
+  };
+  // остаток товара на точке: поставить нужное количество (разница — корректировкой)
+  ops.setStock = function (productId, pointId, target, reason) {
+    const diff = Math.round(target) - SM.qty(productId, pointId);
+    if (!diff) return 0;
+    SM.addMove(productId, pointId, diff, diff < 0 ? 'writeoff' : 'adjust', reason);
+    // остаток кэшируется до SM.save(), поэтому в журнал пишем целевое значение, а не SM.qty
+    SM.log('Изменён остаток', 'product', productId, SM.product(productId).name + ' · ' + SM.point(pointId).name + ': ' + Math.round(target) + ' (' + (diff > 0 ? '+' : '') + diff + ') · ' + reason);
+    SM.save();
+    return diff;
   };
   ops.markRead = function (ids) { const u = me(); SM.db.notes.forEach((n) => { if ((!ids || ids.includes(n.id)) && !n.readBy.includes(u.id)) n.readBy.push(u.id); }); SM.save(); };
 })();

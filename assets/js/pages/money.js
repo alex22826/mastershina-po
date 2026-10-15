@@ -51,16 +51,17 @@
       body: html`<form class="stack" style="gap:12px" autocomplete="off">
         <div class="choice"><label><input type="radio" name="dir" value="in" checked><span>${I('plus')}Внесение</span></label><label><input type="radio" name="dir" value="out"><span>${I('minus')}Изъятие</span></label></div>
         <div class="field"><label>Счёт</label><select class="select" name="acc">${UI.options(SM.ACCOUNTS.map((a) => [a.id, a.name]), 'cash_uzs')}</select></div>
-        <div class="field"><label>Сумма <span class="req">*</span></label><input class="input num" type="number" name="amount" min="0" step="any" autofocus></div>
+        <div class="field"><label>Сумма <span class="req">*</span></label><input class="input" name="amount" ${UI.moneyAttrs(100000000000)} autofocus></div>
         <div class="field"><label>Основание <span class="req">*</span></label><input class="input" name="title" placeholder="Инкассация, размен…"></div></form>`,
       foot: html`<button class="btn btn-ghost" data-close>Отмена</button><button class="btn btn-primary" data-ok>Провести</button>` });
     m.querySelector('[data-ok]').onclick = () => {
       const f = m.querySelector('form'), d = UI.formData(f);
-      if (!(+d.amount > 0)) return UI.invalid(f, 'amount', 'Введите сумму');
+      d.amount = UI.num(d.amount);
+      if (!(d.amount > 0)) return UI.invalid(f, 'amount', 'Введите сумму');
       if (!d.title) return UI.invalid(f, 'title', 'Укажите основание');
       const o = { id: SM.uid('co'), at: new Date().toISOString(), acc: d.acc, amount: d.dir === 'in' ? +d.amount : -d.amount, title: d.dir === 'in' ? 'Внесение: ' + d.title : 'Изъятие: ' + d.title, rate: SM.rate(), by: SM.user.id };
       SM.db.cashOps.push(o); SM.log(o.title, 'cash', o.id, F.cur(Math.abs(o.amount), SM.account(d.acc).cur) + ' · ' + SM.account(d.acc).name); SM.save();
-      UI.closeTop(); UI.toast('Проведено', o.title); SM.refresh();
+      UI.closeTop(); UI.toast(o.amount > 0 ? 'Деньги внесены' : 'Деньги изъяты', o.title + ' · ' + F.cur(Math.abs(o.amount), SM.account(d.acc).cur), 'ok', { icon: o.amount > 0 ? 'plus' : 'minus' }); SM.refresh();
     };
   }
 
@@ -123,59 +124,51 @@
       <div class="card"><div class="card-b">${body}</div></div>`;
   }
 
-  /* ---------- Расходы ---------- */
+  /* ---------- Расходы: одна категория «Расходы компании», на что — текстом ---------- */
   function expensesPage(r) {
     const R = range(r, 'month');
-    const cat = r.q.cat || '', pt = r.q.pt || '';
-    const list = SM.db.expenses.filter((e) => D.inRange(e.date, R.from, R.to) && (!cat || e.cat === cat) && (!pt || e.pointId === pt)).slice().sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    const pt = r.q.pt || '', q = (r.q.q || '').toLowerCase();
+    const list = SM.db.expenses.filter((e) => D.inRange(e.date, R.from, R.to) && (!pt || e.pointId === pt) && (!q || (e.comment || '').toLowerCase().includes(q))).slice().sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.at).localeCompare(String(a.at)));
     const act = list.filter((e) => !e.cancelled);
     const sum = act.reduce((a, e) => a + SM.toUZS(e.amount, e.cur, e.rate), 0);
-    const byCat = {};
-    act.forEach((e) => (byCat[e.cat] = (byCat[e.cat] || 0) + SM.toUZS(e.amount, e.cur, e.rate)));
-    const rows = Object.entries(byCat).sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ label: SM.expCat(k).name, value: v }));
-    const byPt = {};
-    act.forEach((e) => (byPt[e.pointId || '—'] = (byPt[e.pointId || '—'] || 0) + SM.toUZS(e.amount, e.cur, e.rate)));
+    const today = act.filter((e) => e.date === D.todayISO()).reduce((a, e) => a + SM.toUZS(e.amount, e.cur, e.rate), 0);
+    const usd = act.filter((e) => e.cur === 'USD').reduce((a, e) => a + e.amount, 0);
+    const edit = SM.can('expenses', 2);
     return html`
-      ${UI.pageHead('Расходы', 'Питание, авансы, ремонт и топливо, доставка, хозяйственные и другие операционные расходы', html`<button class="btn btn-secondary" data-x="export">${I('download')}Excel</button>${SM.can('expenses', 2) ? html`<button class="btn btn-primary" data-x="new">${I('plus')}Расход</button>` : ''}`)}
-      <div class="row mb-16">${periodBox(R)}${UI.filterSelect('cat', cat, SM.db.expCats.map((c) => [c.id, c.name]), 'Все категории')}${UI.filterSelect('pt', pt, UI.pointOptions(), 'Все точки')}</div>
-      <div class="grid g-4 keep-2 stagger">
-        ${UI.kpi({ label: 'Расходы · ' + R.label, icon: 'coins', value: F.m(sum), count: Math.round(sum), unit: 'сум', foot: act.length + ' операций', cls: 'k-accent' })}
-        ${UI.kpi({ label: 'Крупнейшая категория', icon: 'chart', value: rows[0] ? rows[0].label : '—', foot: rows[0] ? F.cur(rows[0].value) : '' })}
-        ${UI.kpi({ label: 'Транспорт', icon: 'truck', value: F.m((byCat.fuel || 0) + (byCat.carfix || 0) + (byCat.delivery || 0)), unit: 'сум', foot: 'топливо, ремонт, доставка' })}
-        ${UI.kpi({ label: 'В $', icon: 'dollar', value: F.usd(act.filter((e) => e.cur === 'USD').reduce((a, e) => a + e.amount, 0)), foot: 'расходы из кассы $' })}
+      ${UI.pageHead('Расходы компании', 'Любые траты: аренда, топливо, обеды, ремонт — на что потрачено, пишется текстом', html`<button class="btn btn-secondary" data-x="export">${I('download')}Excel</button>${edit ? html`<button class="btn btn-primary" data-x="new">${I('plus')}Расход</button>` : ''}`)}
+      <div class="grid g-3 keep-2 stagger">
+        ${UI.kpi({ label: 'Расходы · ' + R.label, icon: 'coins', value: F.m(sum), count: Math.round(sum), unit: 'сум', foot: act.length + ' ' + F.plural(act.length, 'операция', 'операции', 'операций'), cls: 'k-accent' })}
+        ${UI.kpi({ label: 'Сегодня', icon: 'calendar', value: F.m(today), count: Math.round(today), unit: 'сум', foot: 'в сумах по курсу операции' })}
+        ${UI.kpi({ label: 'Из кассы в $', icon: 'dollar', value: F.usd(usd), foot: 'за выбранный период' })}
       </div>
-      <div class="grid g-21 mt-16 stagger">
-        <div class="card"><div class="card-h"><h3>${I('history')}Операции</h3></div><div class="card-b">${list.length ? html`<div class="table-wrap"><table class="table compact"><thead><tr><th>Дата</th><th>Категория</th><th>Кому / на что</th><th>Точка, авто</th><th class="r">Сумма</th><th></th></tr></thead><tbody>
-          ${list.map((e) => html`<tr class="${e.cancelled ? 'row-muted' : ''}"><td class="nowrap">${F.date(e.date)}</td><td><span class="cell-title fw-6">${SM.expCat(e.cat).name}</span><span class="cell-sub">${SM.account(e.account).name}</span></td>
-            <td><span class="cell-title fw-6">${e.employee || '—'}</span><span class="cell-sub">${e.comment}${e.file ? html` · ${I('paperclip')} ${e.file}` : ''}</span></td>
-            <td><span class="cell-title fw-6">${e.pointId ? SM.point(e.pointId).name : '—'}</span><span class="cell-sub">${e.car ? SM.car(e.car).model + ' · ' + SM.car(e.car).plate : ''}</span></td>
-            <td class="r nowrap"><b class="${e.cancelled ? '' : 'bad-t'}">${F.cur(e.amount, e.cur)}</b>${e.cancelled ? html`<span class="cell-sub">отменён</span>` : ''}</td>
-            <td>${!e.cancelled && (SM.flag('cancelOps') || SM.isAdmin()) ? html`<button class="btn btn-ghost btn-sm" data-cancel="${e.id}">${I('undo')}</button>` : ''}</td></tr>`)}</tbody></table></div>` : UI.empty('Расходов нет', 'за выбранный период', 'coins')}</div></div>
-        <div class="stack"><div class="card"><div class="card-h"><h3>${I('chart')}По категориям</h3></div><div class="card-b">${rows.length ? UI.hbars(rows) : UI.empty('Нет данных')}</div></div>
-          <div class="card"><div class="card-h"><h3>${I('store')}По точкам</h3></div><div class="card-b">${Object.keys(byPt).length ? UI.hbars(Object.entries(byPt).sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ label: k === '—' ? 'Без точки' : SM.point(k).name, value: v })), { color: 'var(--s2)' }) : UI.empty('Нет данных')}</div></div></div>
-      </div>`;
+      <div class="card mt-16"><div class="card-h">${UI.searchInput(r.q.q, 'На что потрачено')}${SM.db.points.length > 1 ? UI.filterSelect('pt', pt, UI.pointOptions(), 'Все точки') : ''}<span class="right">${periodBox(R)}</span></div>
+        <div class="card-b" style="padding-top:12px">${list.length ? html`<div class="table-wrap"><table class="table"><thead><tr><th>На что</th><th>Дата</th><th>Касса / счёт</th><th>Точка</th><th class="r">Сумма</th><th></th></tr></thead><tbody>
+          ${list.map((e) => html`<tr class="${e.cancelled ? 'row-muted' : ''}">
+            <td><span class="cell-title">${e.comment || 'Без описания'}</span><span class="cell-sub">${SM.user_(e.by).name}${e.file ? html` · ${I('paperclip')} ${e.file}` : ''}</span></td>
+            <td class="nowrap">${F.date(e.date)}</td><td>${SM.account(e.account).name}</td><td>${e.pointId ? SM.point(e.pointId).name : html`<span class="muted">—</span>`}</td>
+            <td class="r nowrap"><b class="${e.cancelled ? '' : 'bad-t'}">−${F.cur(e.amount, e.cur)}</b>${e.cancelled ? html`<span class="cell-sub">отменён: ${e.cancelReason || ''}</span>` : ''}</td>
+            <td class="td-act">${!e.cancelled && (SM.flag('cancelOps') || SM.isAdmin()) ? html`<button type="button" class="act-btn del" data-cancel="${e.id}" data-tip="Отменить расход" aria-label="Отменить расход">${I('undo')}</button>` : ''}</td></tr>`)}</tbody></table></div>` : UI.empty('Расходов нет', 'за выбранный период', 'coins')}</div></div>`;
   }
   function expenseForm() {
-    const m = UI.modal({ title: 'Новый расход', size: 'wide',
+    const m = UI.modal({ title: 'Новый расход', sub: 'Категория: «Расходы компании»',
       body: html`<form class="form-grid" autocomplete="off">
-        <div class="field"><label>Дата</label><input class="input" type="date" name="date" value="${D.todayISO()}"></div>
-        <div class="field"><label>Категория</label><select class="select" name="cat">${UI.options(SM.db.expCats.map((c) => [c.id, c.name]), 'food')}</select></div>
+        <div class="field full"><label>На что расход <span class="req">*</span></label><input class="input" name="comment" placeholder="Например: аренда склада, топливо для Damas, обед сотрудникам" autofocus></div>
+        <div class="field"><label>Сумма <span class="req">*</span></label><div class="input-suffix"><input class="input" name="amount" ${UI.moneyAttrs(10000000000)}><em data-cur>сум</em></div></div>
         <div class="field"><label>Касса или счёт</label><select class="select" name="account">${UI.options(SM.ACCOUNTS.map((a) => [a.id, a.name]), 'cash_uzs')}</select></div>
-        <div class="field"><label>Сумма <span class="req">*</span></label><div class="input-suffix"><input class="input num" type="number" name="amount" min="0" step="any" autofocus><em data-cur>сум</em></div></div>
-        <div class="field"><label>Сотрудник</label><input class="input" name="employee" list="emps" placeholder="Кому выдано"><datalist id="emps">${SM.db.users.map((u) => html`<option value="${u.name}">`)}${SM.db.drivers.map((d) => html`<option value="${d.name}">`)}</datalist></div>
+        <div class="field"><label>Дата</label><input class="input" type="date" name="date" value="${D.todayISO()}"></div>
         <div class="field"><label>Магазин или склад</label><select class="select" name="pointId">${UI.options(UI.pointOptions(), '', 'Не указан')}</select></div>
-        <div class="field"><label>Автомобиль</label><select class="select" name="car">${UI.options(SM.db.cars.map((c) => [c.id, c.model + ' · ' + c.plate]), '', 'Не относится')}</select></div>
-        <div class="field"><label>Документ</label><input class="input" type="file" name="file" style="padding-top:9px"></div>
-        <div class="field full"><label>Комментарий</label><input class="input" name="comment" placeholder="За что расход"></div></form>`,
+        <div class="field full"><label>Чек или документ</label><input class="input" type="file" name="file" style="padding-top:10px"></div></form>`,
       foot: html`<button class="btn btn-ghost" data-close>Отмена</button><button class="btn btn-primary" data-ok>${I('check')}Сохранить</button>` });
     const f = m.querySelector('form');
-    const sc = () => (m.querySelector('[data-cur]').textContent = SM.account(f.account.value).cur === 'USD' ? '$' : 'сум');
+    const sc = () => { const usd = SM.account(f.account.value).cur === 'USD'; m.querySelector('[data-cur]').textContent = usd ? '$' : 'сум'; f.amount.dataset.dec = usd ? 2 : 0; };
     f.account.addEventListener('change', sc); sc();
     m.querySelector('[data-ok]').onclick = () => {
       const d = UI.formData(f);
-      if (!(+d.amount > 0)) return UI.invalid(f, 'amount', 'Введите сумму');
-      const e = SM.ops.saveExpense(Object.assign(d, { file: f.file.files[0] ? f.file.files[0].name : '' }));
-      UI.closeTop(); UI.toast('Расход сохранён', SM.expCat(e.cat).name + ' · ' + F.cur(e.amount, e.cur)); SM.refresh();
+      if (!d.comment) return UI.invalid(f, 'comment', 'Напишите, на что потрачено');
+      const amount = UI.num(d.amount);
+      if (!(amount > 0)) return UI.invalid(f, 'amount', 'Введите сумму');
+      const e = SM.ops.saveExpense(Object.assign(d, { cat: 'company', amount, file: f.file.files[0] ? f.file.files[0].name : '' }));
+      UI.closeTop(); UI.toast('Расход записан', e.comment + ' · ' + F.cur(e.amount, e.cur), 'ok', { icon: 'coins' }); SM.refresh();
     };
   }
 
@@ -194,9 +187,9 @@
         <div class="card"><div class="card-h"><h3>${I('chart')}Динамика курса</h3></div><div class="card-b">${UI.chart({ type: 'line', height: 220, padL: 56, labels: last.map((x) => F.dm(x.at)), series: [{ name: 'Наличный', color: '#e0365e', values: last.map((x) => x.cash) }, { name: 'Безналичный', color: '#6aa8ff', values: last.map((x) => x.card) }, { name: 'Перечисление', color: '#3ddc97', values: last.map((x) => x.bank) }], fmt: (v) => F.num(v), tipFmt: (v) => F.num(v) + ' сум' })}
           ${UI.legend([{ name: 'Наличный', color: '#e0365e' }, { name: 'Безналичный', color: '#6aa8ff' }, { name: 'Перечисление', color: '#3ddc97' }])}</div></div>
         <div class="card"><div class="card-h"><h3>${I('edit')}Установить курс</h3></div><div class="card-b">${can ? html`<form class="stack" style="gap:12px" id="rateForm">
-            <div class="field"><label>Наличный</label><input class="input num" type="number" name="cash" value="${cur.cash}" step="any"></div>
-            <div class="field"><label>Безналичный</label><input class="input num" type="number" name="card" value="${cur.card}" step="any"></div>
-            <div class="field"><label>Перечисление</label><input class="input num" type="number" name="bank" value="${cur.bank}" step="any"></div>
+            <div class="field"><label>Наличный</label><input class="input" name="cash" ${UI.moneyAttrs(100000, 2)} value="${UI.fmtInput(cur.cash, 2)}"></div>
+            <div class="field"><label>Безналичный</label><input class="input" name="card" ${UI.moneyAttrs(100000, 2)} value="${UI.fmtInput(cur.card, 2)}"></div>
+            <div class="field"><label>Перечисление</label><input class="input" name="bank" ${UI.moneyAttrs(100000, 2)} value="${UI.fmtInput(cur.bank, 2)}"></div>
             <button class="btn btn-primary" type="submit">${I('check')}Сохранить курс</button>
             <p class="fs-12 muted">Новый курс применяется к новым операциям. Курс уже проведённых операций не меняется.</p></form>` : html`<div class="note-box">${I('lock')}<div>Устанавливать курс могут роли с правом «Установка курсов» (администратор, руководитель, бухгалтер).</div></div>`}</div></div>
       </div>
@@ -228,27 +221,27 @@
     title: 'Бухгалтерия', render: accountingPage,
     mount(el) {
       UI.bindTabs(el); bindRange(el); UI.bindFilters(el);
-      UI.$$('[data-ok]', el).forEach((b) => (b.onclick = () => { SM.ops.confirmPayment(b.dataset.ok, true); UI.toast('Оплата подтверждена', 'Статус продажи обновлён'); SM.refresh(); }));
-      UI.$$('[data-no]', el).forEach((b) => (b.onclick = async () => { const why = await UI.prompt('Отклонить оплату?', 'Продавец получит уведомление', { ok: 'Отклонить', danger: true }); if (!why) return; SM.ops.confirmPayment(b.dataset.no, false, why); UI.toast('Оплата отклонена', why, 'warn'); SM.refresh(); }));
+      UI.$$('[data-ok]', el).forEach((b) => (b.onclick = () => { SM.ops.confirmPayment(b.dataset.ok, true); UI.toast('Оплата подтверждена', 'Статус продажи обновлён', 'ok', { icon: 'wallet' }); SM.refresh(); }));
+      UI.$$('[data-no]', el).forEach((b) => (b.onclick = async () => { const why = await UI.prompt('Отклонить оплату?', 'Продавец получит уведомление', { ok: 'Отклонить', danger: true }); if (!why) return; SM.ops.confirmPayment(b.dataset.no, false, why); UI.toast('Оплата отклонена', why, 'bad', { icon: 'x' }); SM.refresh(); }));
     },
   });
   SM.page('expenses', {
     title: 'Расходы', render: expensesPage,
     mount(el, r) {
-      bindRange(el); UI.bindFilters(el);
+      bindRange(el); UI.bindFilters(el); UI.bindSearch(el);
       const n = el.querySelector('[data-x=new]'); if (n) n.onclick = expenseForm;
-      UI.$$('[data-cancel]', el).forEach((b) => (b.onclick = async () => { const e = SM.db.expenses.find((x) => x.id === b.dataset.cancel); const why = await UI.prompt('Отменить расход?', SM.expCat(e.cat).name + ' · ' + F.cur(e.amount, e.cur), { ok: 'Отменить', danger: true }); if (!why) return; SM.ops.cancelExpense(e, why); UI.toast('Расход отменён', '', 'warn'); SM.refresh(); }));
+      UI.$$('[data-cancel]', el).forEach((b) => (b.onclick = async () => { const e = SM.db.expenses.find((x) => x.id === b.dataset.cancel); const why = await UI.prompt('Отменить расход?', (e.comment || SM.expCat(e.cat).name) + ' · ' + F.cur(e.amount, e.cur), { ok: 'Отменить', danger: true }); if (!why) return; SM.ops.cancelExpense(e, why); UI.toast('Расход отменён', e.comment + ' · ' + why, 'warn', { icon: 'undo' }); SM.refresh(); }));
       const R = range(r, 'month');
-      el.querySelector('[data-x=export]').onclick = () => UI.exportXLSX('Расходы_' + D.todayISO(), [['Дата', 'Категория', 'Сумма', 'Валюта', 'Касса/счёт', 'Сотрудник', 'Точка', 'Автомобиль', 'Комментарий', 'Статус'], ...SM.db.expenses.filter((e) => D.inRange(e.date, R.from, R.to)).map((e) => [F.date(e.date), SM.expCat(e.cat).name, e.amount, e.cur, SM.account(e.account).name, e.employee, e.pointId ? SM.point(e.pointId).name : '', e.car ? SM.car(e.car).plate : '', e.comment, e.cancelled ? 'отменён' : ''])], 'Расходы');
+      el.querySelector('[data-x=export]').onclick = () => UI.exportXLSX('Расходы_' + D.todayISO(), [['Дата', 'На что', 'Сумма', 'Валюта', 'Касса/счёт', 'Точка', 'Кто внёс', 'Статус'], ...SM.db.expenses.filter((e) => D.inRange(e.date, R.from, R.to)).map((e) => [F.date(e.date), e.comment, e.amount, e.cur, SM.account(e.account).name, e.pointId ? SM.point(e.pointId).name : '', SM.user_(e.by).name, e.cancelled ? 'отменён' : ''])], 'Расходы');
     },
   });
   SM.page('rates', {
     title: 'Валюты и НДС', render: ratesPage,
     mount(el) {
       const rf = el.querySelector('#rateForm');
-      if (rf) rf.onsubmit = (e) => { e.preventDefault(); const d = UI.formData(rf); if (!(+d.cash > 0 && +d.card > 0 && +d.bank > 0)) return UI.toast('Проверьте курс', 'Все значения должны быть больше нуля', 'warn'); SM.ops.setRate(d); UI.toast('Курс сохранён', '$1 = ' + F.num(+d.cash) + ' сум (наличный)'); SM.refresh(); };
+      if (rf) rf.onsubmit = (e) => { e.preventDefault(); const d = UI.formData(rf); ['cash', 'card', 'bank'].forEach((k) => (d[k] = UI.num(d[k]))); if (!(d.cash > 0 && d.card > 0 && d.bank > 0)) return UI.toast('Проверьте курс', 'Все значения должны быть больше нуля', 'warn'); SM.ops.setRate(d); UI.toast('Курс $ изменён', '$1 = ' + F.num(d.cash) + ' сум (наличный) · новые операции пойдут по нему', 'ok', { icon: 'dollar' }); SM.refresh(); };
       const vf = el.querySelector('#vatForm');
-      if (vf) vf.onsubmit = (e) => { e.preventDefault(); const d = UI.formData(vf); SM.db.settings.vat = { enabled: !!d.enabled, rate: +d.rate || 0, mode: vf.querySelector('[name=mode]:checked').value }; SM.log('Изменены настройки НДС', 'settings', null, (d.enabled ? 'включён ' : 'выключен ') + d.rate + '%'); SM.save(); UI.toast('НДС сохранён'); SM.refresh(); };
+      if (vf) vf.onsubmit = (e) => { e.preventDefault(); const d = UI.formData(vf); SM.db.settings.vat = { enabled: !!d.enabled, rate: +d.rate || 0, mode: vf.querySelector('[name=mode]:checked').value }; SM.log('Изменены настройки НДС', 'settings', null, (d.enabled ? 'включён ' : 'выключен ') + d.rate + '%'); SM.save(); UI.toast('Настройки НДС сохранены', (d.enabled ? 'НДС ' + d.rate + '%' : 'НДС выключен') + ' · для новых документов', 'ok', { icon: 'percent' }); SM.refresh(); };
     },
   });
 })();

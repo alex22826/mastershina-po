@@ -52,6 +52,16 @@
 
   /* ---------- Список продаж ---------- */
   const STS = ['draft', 'await', 'partial', 'paid', 'ready', 'shipped', 'done', 'cancelled'];
+  const stColor = (k) => { const c = SM.SALE_STATUS[k][1].replace('b-', ''); return 'var(--' + (c === 'accent' ? 'glow' : c) + ')'; };
+  // кто может менять и удалять продажу
+  SM.canEditSale = (s) => SM.can('sales', 2) && (s.state === 'draft' || (s.state === 'posted' && !s.shippedAt)) && (!SM.flag('ownOnly') || s.sellerId === SM.user.id);
+  SM.canDeleteSale = (s) => SM.isAdmin() || SM.flag('cancelOps') || (SM.can('sales', 2) && s.state === 'draft' && (!SM.flag('ownOnly') || s.sellerId === SM.user.id));
+  SM.deleteSaleAsk = async (s) => {
+    const txt = s.state === 'draft' ? 'Черновик и резерв товара будут удалены.' : s.shippedAt ? 'Товар уже отгружен — остатки не изменятся. Оплаты, доставка и документы продажи тоже удалятся.' : 'Товар вернётся на склад, оплаты, доставка и документы этой продажи удалятся. Запись останется в истории операций.';
+    if (!(await UI.confirmDelete('Удалить продажу ' + s.no + '?', txt))) return false;
+    SM.ops.deleteSale(s); UI.closeAll(); UI.toast('Продажа удалена', s.no + ' · ' + SM.client(s.clientId).name, 'ok', { icon: 'trash' }); SM.refresh();
+    return true;
+  };
   function salesList(r) {
     const q = (r.q.q || '').toLowerCase(), st = r.q.st || '', pt = r.q.pt || '', sl = r.q.sl || '', p = r.q.p || 'all';
     const R = SM.periodRange(p);
@@ -61,30 +71,32 @@
     const list = base.filter((s) => !st || SM.saleStatus(s) === st).slice().sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
     const total = list.filter((s) => s.state !== 'cancelled' && s.state !== 'draft').reduce((a, s) => a + SM.saleTotalUZS(s), 0);
     const seeSellers = !SM.flag('ownOnly');
+    // статусы — одним выпадающим списком с количеством в каждом
+    const stSel = html`<select class="select input-sm" data-filter="st" aria-label="Статус" style="width:auto;min-width:210px;flex:0 1 240px"><option value="" data-count="${base.length}">Все статусы</option>${STS.map((k) => html`<option value="${k}" data-dot="${stColor(k)}" data-count="${cnt[k] || 0}" ${st === k ? raw('selected') : ''}>${SM.SALE_STATUS[k][0]}</option>`)}</select>`;
     return html`
       ${UI.pageHead('Продажи', 'Оформление, оплата, сборка и отгрузка · ' + list.length + ' ' + F.plural(list.length, 'документ', 'документа', 'документов') + ' на ' + F.cur(total), html`
         <button class="btn btn-secondary" data-x="export">${I('download')}Excel</button>
         ${SM.can('sales', 2) ? html`<a class="btn btn-primary" href="#/sales/new">${I('plus')}Новая продажа</a>` : ''}`)}
-      <div class="pipeline" style="--n:8">${STS.map((k) => html`<button class="pipe ${st === k ? 'on' : ''}" data-st="${k}"><span><i class="dot" style="background:var(--${SM.SALE_STATUS[k][1].replace('b-', '') === 'accent' ? 'glow' : SM.SALE_STATUS[k][1].replace('b-', '')})"></i>${SM.SALE_STATUS[k][0]}</span><b>${cnt[k] || 0}</b></button>`)}</div>
       <div class="card">
-        <div class="card-h">${UI.searchInput(r.q.q, '№ продажи, клиент, телефон')}${UI.filterSelect('pt', pt, UI.pointOptions(), 'Все точки')}${seeSellers ? UI.filterSelect('sl', sl, SM.db.users.filter((u) => u.role === 'seller' || u.role === 'admin').map((u) => [u.id, u.name]), 'Все продавцы') : ''}<span class="right">${UI.periodSeg(p)}</span></div>
-        <div class="card-b" style="padding-top:12px">${list.length ? html`<div class="table-wrap"><table class="table"><thead><tr><th>Продажа</th><th>Клиент</th><th>Точка · продавец</th><th class="r">Сумма</th><th>Оплата</th><th>Отгрузка</th><th>Статус</th></tr></thead><tbody>
+        <div class="card-h">${UI.searchInput(r.q.q, '№ продажи, клиент, телефон')}${stSel}${SM.db.points.length > 1 ? UI.filterSelect('pt', pt, UI.pointOptions(), 'Все точки') : ''}${seeSellers ? UI.filterSelect('sl', sl, SM.db.users.filter((u) => u.role === 'seller' || u.role === 'admin').map((u) => [u.id, u.name]), 'Все продавцы') : ''}<span class="right">${UI.periodSeg(p)}</span></div>
+        <div class="card-b" style="padding-top:12px">${list.length ? html`<div class="table-wrap"><table class="table"><thead><tr><th>Продажа</th><th>Клиент</th><th>Точка · продавец</th><th class="r">Сумма</th><th>Оплата</th><th>Статус</th><th></th></tr></thead><tbody>
           ${list.map((s) => { const c = SM.saleCalc(s); return html`<tr class="click ${SM.overdue(s) ? 'row-bad' : ''} ${s.state === 'cancelled' ? 'row-muted' : ''}" data-act="open-sale" data-id="${s.id}">
             <td><span class="cell-title">${s.no} ${s.source === 'site' ? html`<span class="chip site">${I('globe')}сайт</span>` : ''}</span><span class="cell-sub">${F.date(s.date)}</span></td>
             <td><span class="cell-title">${SM.client(s.clientId).name}</span><span class="cell-sub">${SM.client(s.clientId).phone}</span></td>
             <td><span class="cell-title fw-6">${SM.point(s.pointId).name}</span><span class="cell-sub">${SM.user_(s.sellerId).name}</span></td>
             <td class="r nowrap"><b>${F.cur(c.total, s.cur)}</b>${s.cur === 'USD' ? html`<span class="cell-sub">≈ ${F.short(SM.saleTotalUZS(s))} сум</span>` : ''}</td>
             <td>${s.state === 'draft' || s.state === 'cancelled' ? html`<span class="muted">—</span>` : UI.badge(SM.payStatus(s))}${c.debt > 0 && s.state === 'posted' ? html`<span class="cell-sub ${SM.overdue(s) ? 'bad-t' : ''}">долг ${F.cur(c.debt, s.cur)}</span>` : ''}</td>
-            <td>${s.state === 'draft' || s.state === 'cancelled' ? html`<span class="muted">—</span>` : UI.badge(SM.shipStatus(s))}</td>
-            <td>${UI.badge(SM.SALE_STATUS[SM.saleStatus(s)])}</td></tr>`; })}</tbody></table></div>` : UI.empty('Продаж не найдено', 'Измените фильтры или оформите новую продажу', 'cart')}</div>
+            <td>${UI.badge(SM.SALE_STATUS[SM.saleStatus(s)])}</td>
+            <td class="td-act">${UI.actBtns(s.id, { edit: SM.canEditSale(s), del: SM.canDeleteSale(s), editTip: 'Изменить продажу', delTip: 'Удалить продажу' })}</td></tr>`; })}</tbody></table></div>` : UI.empty('Продаж не найдено', 'Измените фильтры или оформите новую продажу', 'cart')}</div>
       </div>`;
   }
 
   /* ---------- Форма продажи ---------- */
   function saleForm(r) {
-    const editing = r.q.edit ? SM.db.sales.find((s) => s.id === r.q.edit && s.state === 'draft') : null;
+    const editing = r.q.edit ? SM.db.sales.find((s) => s.id === r.q.edit && SM.canEditSale(s)) : null;
+    const postedEdit = editing && editing.state === 'posted';
     return html`
-      ${UI.pageHead(editing ? 'Черновик ' + editing.no : 'Новая продажа', 'Выберите клиента и точку, добавьте товары — остаток на точке виден сразу', html`<a class="btn btn-ghost" href="#/sales">${I('arrowLeft')}К списку</a>`)}
+      ${UI.pageHead(editing ? (postedEdit ? 'Изменение ' : 'Черновик ') + editing.no : 'Новая продажа', postedEdit ? 'Продажа уже проведена: при сохранении старые товары вернутся на склад, новые спишутся' : 'Выберите клиента и точку, добавьте товары — остаток на точке виден сразу', html`<a class="btn btn-ghost" href="#/sales">${I('arrowLeft')}К списку</a>`)}
       <form id="saleForm" class="grid g-21" autocomplete="off" novalidate>
         <div class="stack">
           <div class="card"><div class="card-h"><h3>${I('user')}Клиент и точка</h3></div><div class="card-b">
@@ -118,14 +130,15 @@
           <div class="card"><div class="card-h"><h3>${I('truck')}Получение</h3></div><div class="card-b">
             <div class="choice"><label><input type="radio" name="receive" value="pickup" checked><span>${I('store')}Самовывоз</span></label><label><input type="radio" name="receive" value="delivery"><span>${I('truck')}Доставка</span></label></div>
             <div class="field mt-12 hide" id="addrBox"><label>Адрес доставки</label><input class="input" name="address" placeholder="Адрес клиента"><span class="hint">После проведения создастся заявка в разделе «Доставка»</span></div>
-            <div class="row mt-16"><button type="button" class="btn btn-secondary grow" data-x="draft">${I('edit')}Черновик</button><button type="submit" class="btn btn-primary grow">${I('check')}Провести</button></div>
-            <p class="fs-12 muted mt-8">Черновик резервирует товар. Проведение списывает его с точки.</p></div></div>
+            ${postedEdit ? html`<div class="row mt-16"><button type="submit" class="btn btn-primary grow">${I('check')}Сохранить изменения</button></div><p class="fs-12 muted mt-8">Остатки пересчитаются автоматически, оплаты сохранятся.</p>` : html`<div class="row mt-16"><button type="button" class="btn btn-secondary grow" data-x="draft">${I('edit')}Черновик</button><button type="submit" class="btn btn-primary grow">${I('check')}Провести</button></div>
+            <p class="fs-12 muted mt-8">Черновик резервирует товар. Проведение списывает его с точки.</p>`}</div></div>
         </div>
       </form>`;
   }
   function mountSaleForm(el, r) {
     const form = UI.$('#saleForm', el);
-    const editing = r.q.edit ? SM.db.sales.find((s) => s.id === r.q.edit && s.state === 'draft') : null;
+    const editing = r.q.edit ? SM.db.sales.find((s) => s.id === r.q.edit && SM.canEditSale(s)) : null;
+    const postedEdit = editing && editing.state === 'posted';
     const myPoints = SM.userPoints().filter((p) => SM.point(p).active);
     const st = editing ? { items: editing.items.map((l) => Object.assign({}, l)), pays: [] } : { items: [], pays: [] };
     const sel = (n) => form.querySelector('[name=' + n + ']');
@@ -160,6 +173,14 @@
       const paid = st.pays.reduce((a, p) => a + SM.conv(+p.amount || 0, SM.method(p.method).cur, cur(), SM.rate(SM.method(p.method).rate)), 0);
       return Object.assign(c, { paidNow: paid, rest: Math.max(0, c.total - paid) });
     };
+    // предел суммы в строке оплаты: остаток к оплате (с учётом других строк и уже внесённых оплат) в валюте способа
+    const already = () => (editing ? SM.saleCalc(editing).paid + SM.saleCalc(editing).pending : 0);
+    const payMax = (i) => {
+      const c = calc(), p = st.pays[i], m = SM.method(p.method);
+      const others = st.pays.reduce((a, q, j) => (j === i ? a : a + SM.conv(+q.amount || 0, SM.method(q.method).cur, cur(), SM.rate(SM.method(q.method).rate))), 0);
+      return Math.round(SM.conv(Math.max(0, c.total - already() - others), cur(), m.cur, SM.rate(m.rate)) * 100) / 100;
+    };
+    const syncPayMax = () => UI.$$('#pays [data-pk=amount]', el).forEach((inp) => UI.setMax(inp, payMax(+inp.closest('.pay-row').dataset.pi)));
     const drawLines = () => {
       const box = UI.$('#lines', el);
       UI.$('#lineCount', el).textContent = st.items.length ? st.items.length + ' поз. · ' + st.items.reduce((a, l) => a + (+l.qty || 0), 0) + ' ед.' : '';
@@ -168,7 +189,7 @@
         return String(html`<div class="line" data-i="${i}">
           <div class="ln-name"><b>${p.name}</b><small>${p.code} · <span class="ln-avail ${over ? 'bad-t' : 'ok-t'}">доступно ${av} ${p.unit}</span>${p.cur !== cur() ? html` · база ${F.cur(p.price, p.cur)}` : ''}</small></div>
           <div class="field"><input class="input input-sm num ${over ? 'is-over' : ''}" type="number" min="1" step="1" data-k="qty" value="${l.qty}" aria-label="Количество"></div>
-          <div class="field"><input class="input input-sm num" type="number" min="0" step="${cur() === 'USD' ? '0.01' : '1000'}" data-k="price" value="${Math.round(l.price * 100) / 100}" aria-label="Цена"></div>
+          <div class="field"><input class="input input-sm" ${UI.moneyAttrs(null, cur() === 'USD' ? 2 : 0)} data-k="price" value="${UI.fmtInput(Math.round(l.price * 100) / 100, 2)}" aria-label="Цена"></div>
           <div class="field"><input class="input input-sm num" type="number" min="0" max="100" step="0.5" data-k="disc" value="${l.disc || 0}" aria-label="Скидка, %"></div>
           <div class="ln-sum" data-sum>${fmtC(SM.lineSum(l))}</div>
           <button type="button" class="btn btn-icon btn-sm" data-del="${i}" aria-label="Убрать">${I('x')}</button></div>`);
@@ -183,12 +204,13 @@
         <div class="row grand"><span>Итого</span><b>${fmtC(c.total)}</b></div>
         ${cur() === 'USD' ? html`<div class="row"><span>В сумах по курсу ${F.num(rate())}</span><b>${F.cur(c.total * rate())}</b></div>` : ''}`);
       UI.$('#payTotals', el).innerHTML = String(html`<div class="row"><span>Оплачено сейчас</span><b class="ok-t">${fmtC(c.paidNow)}</b></div><div class="row"><span>${sel('credit') && sel('credit').checked ? 'В долг' : 'Остаток'}</span><b class="${c.rest > c.eps ? 'warn-t' : 'ok-t'}">${fmtC(c.rest)}</b></div>`);
+      syncPayMax();
     };
     const drawPays = () => {
       const box = UI.$('#pays', el);
       box.innerHTML = st.pays.length ? st.pays.map((p, i) => String(html`<div class="pay-row" data-pi="${i}">
         <select class="select input-sm" data-pk="method" aria-label="Способ оплаты">${UI.options(SM.methods().map((m) => [m.id, m.name]), p.method)}</select>
-        <input class="input input-sm num" type="number" min="0" step="${SM.method(p.method).cur === 'USD' ? '0.01' : '1000'}" data-pk="amount" value="${p.amount || ''}" placeholder="Сумма" aria-label="Сумма">
+        <input class="input input-sm" ${UI.moneyAttrs(payMax(i), SM.method(p.method).cur === 'USD' ? 2 : 0)} data-pk="amount" value="${p.amount ? UI.fmtInput(p.amount, 2) : ''}" placeholder="Сумма" aria-label="Сумма">
         <span class="fs-12 fw-7 muted">${SM.method(p.method).cur === 'USD' ? '$' : 'сум'}</span>
         <button type="button" class="btn btn-icon btn-sm" data-pdel="${i}" aria-label="Убрать">${I('x')}</button></div>`)).join('') : '<p class="muted fs-13">Оплата не указана — продажа будет ждать оплаты.</p>';
       UI.enhance(box);
@@ -204,7 +226,7 @@
     UI.$('#lines', el).addEventListener('input', (e) => {
       const k = e.target.dataset.k; if (!k) return;
       const row = e.target.closest('.line'), l = st.items[+row.dataset.i];
-      l[k] = +e.target.value || 0;
+      l[k] = k === 'price' ? UI.num(e.target.value) : +e.target.value || 0;
       if (k === 'disc' && l.disc > SM.discountMax()) { l.disc = SM.discountMax(); e.target.value = l.disc; UI.toast('Скидка ограничена', 'Ваш лимит — ' + SM.discountMax() + '% (настраивается по ролям)', 'warn'); }
       row.querySelector('[data-sum]').textContent = fmtC(SM.lineSum(l));
       if (k === 'qty') { const av = avail(l.productId); row.querySelector('.ln-avail').className = 'ln-avail ' + (l.qty > av ? 'bad-t' : 'ok-t'); }
@@ -215,21 +237,21 @@
       if (e.target.dataset.k !== 'price') return;
       const row = e.target.closest('.line'), l = st.items[+row.dataset.i], min = minPrice(l.productId);
       if (l.price >= min - calc().eps) return;
-      l.price = Math.ceil(min * 100) / 100; e.target.value = l.price;
+      l.price = Math.ceil(min * 100) / 100; UI.setMoney(e.target, l.price);
       row.querySelector('[data-sum]').textContent = fmtC(SM.lineSum(l)); drawTotals();
       UI.toast('Цена ограничена', 'Ниже ' + fmtC(min) + ' — это скидка больше вашего лимита ' + SM.discountMax() + '%', 'warn');
     });
     UI.$('#lines', el).addEventListener('click', (e) => { const d = e.target.closest('[data-del]'); if (d) { st.items.splice(+d.dataset.del, 1); redraw(); } });
-    UI.$('#pays', el).addEventListener('input', (e) => { const k = e.target.dataset.pk; if (k === 'amount') { st.pays[+e.target.closest('.pay-row').dataset.pi].amount = +e.target.value || 0; drawTotals(); } });
+    UI.$('#pays', el).addEventListener('input', (e) => { const k = e.target.dataset.pk; if (k === 'amount') { st.pays[+e.target.closest('.pay-row').dataset.pi].amount = UI.num(e.target.value); drawTotals(); syncPayMax(); } });
     UI.$('#pays', el).addEventListener('change', (e) => { const k = e.target.dataset.pk; if (k === 'method') { st.pays[+e.target.closest('.pay-row').dataset.pi].method = e.target.value; drawPays(); drawTotals(); } });
     UI.$('#pays', el).addEventListener('click', (e) => { const d = e.target.closest('[data-pdel]'); if (d) { st.pays.splice(+d.dataset.pdel, 1); drawPays(); drawTotals(); } });
-    form.querySelector('[data-x=add-pay]').onclick = () => { const c = calc(); const m = SM.methods()[0]; st.pays.push({ method: m.id, amount: Math.round(SM.conv(c.rest, cur(), m.cur, SM.rate(m.rate)) * 100) / 100 || '' }); drawPays(); drawTotals(); };
+    form.querySelector('[data-x=add-pay]').onclick = () => { const c = calc(); const m = SM.methods()[0]; st.pays.push({ method: m.id, amount: Math.round(SM.conv(Math.max(0, c.rest - already()), cur(), m.cur, SM.rate(m.rate)) * 100) / 100 || '' }); drawPays(); drawTotals(); };
     form.querySelector('[data-x=pay-all]').onclick = () => {
       const c = calc();
-      if (c.rest <= c.eps) return;
+      if (c.rest - already() <= c.eps) return;
       if (!st.pays.length) st.pays.push({ method: SM.methods()[0].id, amount: 0 });
       const p = st.pays[st.pays.length - 1], m = SM.method(p.method);
-      p.amount = Math.round(((+p.amount || 0) + SM.conv(c.rest, cur(), m.cur, SM.rate(m.rate))) * 100) / 100;
+      p.amount = Math.round(((+p.amount || 0) + SM.conv(c.rest - already(), cur(), m.cur, SM.rate(m.rate))) * 100) / 100;
       drawPays(); drawTotals();
     };
     // смена валюты или курса — цены строк пересчитываются
@@ -252,6 +274,7 @@
       if (!st.items.length) return UI.toast('Добавьте товары', 'В продаже нет ни одной позиции', 'warn');
       if (st.items.some((l) => !(l.qty > 0) || !(l.price > 0))) return UI.toast('Проверьте строки', 'Количество и цена должны быть больше нуля', 'warn');
       const c = calc();
+      if (postedEdit) post = true; // проверки как при проведении
       const cheap = st.items.find((l) => effPrice(l) < minPrice(l.productId) - c.eps);
       if (cheap) return UI.toast('Скидка больше лимита', SM.product(cheap.productId).name + ': с учётом цены и скидки на документ — не больше ' + SM.discountMax() + '%', 'bad');
       if (post) {
@@ -261,8 +284,8 @@
         if (c.rest > c.eps && st.pays.length && !d.credit && !confirm('Оплата меньше суммы продажи. Провести как частично оплаченную?')) return;
       }
       const s = SM.ops.saveSale({ id: editing ? editing.id : null, date: d.date, clientId: d.clientId, pointId: d.pointId, items: st.items, docDisc: d.docDisc, cur: cur(), rateType: d.rateType, rate: rate(), vat: d.vat,
-        receive: d.receive, address: d.address, credit: !!d.credit, due: d.due, comment: d.comment, payments: post ? st.pays : [] }, post);
-      UI.toast(post ? 'Продажа проведена' : 'Черновик сохранён', s.no + (post ? ' · товар списан с точки' : ' · товар зарезервирован'));
+        receive: d.receive, address: d.address, credit: !!d.credit, due: d.due, comment: d.comment, payments: post || postedEdit ? st.pays : [] }, post && !postedEdit);
+      UI.toast(postedEdit ? 'Продажа изменена' : post ? 'Продажа оформлена' : 'Черновик сохранён', s.no + (postedEdit ? ' · остатки пересчитаны' : post ? ' · товар списан с точки' : ' · товар зарезервирован'), 'ok', { icon: 'cart' });
       location.hash = '#/sales/' + s.id;
     };
     form.onsubmit = (e) => { e.preventDefault(); submit(true); };
@@ -312,25 +335,27 @@
       <div class="section-t">История</div>
       <ul class="timeline">${s.history.slice().reverse().map((h, i) => html`<li class="${i === 0 ? 'on' : ''}"><b>${h.text}</b><small>${F.dt(h.at)} · ${SM.user_(h.uid).name}</small></li>`)}</ul>`;
     const btn = [];
-    if (s.state === 'draft' && SM.can('sales', 2) && (s.sellerId === SM.user.id || !SM.flag('ownOnly'))) btn.push(html`<a class="btn btn-primary" href="#/sales/new?edit=${s.id}">${I('edit')}Открыть черновик</a>`, html`<button class="btn btn-danger" data-x="cancel">${I('x')}Удалить черновик</button>`);
+    if (SM.canEditSale(s)) btn.push(html`<a class="btn ${s.state === 'draft' ? 'btn-primary' : 'btn-secondary'}" href="#/sales/new?edit=${s.id}">${I('edit')}${s.state === 'draft' ? 'Открыть черновик' : 'Изменить'}</a>`);
     if (canPay) btn.push(html`<button class="btn btn-primary" data-x="pay">${I('wallet')}Принять оплату</button>`);
     if (SM.flag('ship') && SM.canReady(s)) btn.push(html`<button class="btn btn-soft" data-x="ready">${I('box')}Собрано</button>`);
     if (SM.flag('ship') && s.state === 'posted' && s.readyAt && !s.shippedAt) btn.push(html`<button class="btn btn-primary" data-x="ship">${I('truck')}Отгрузить</button>`);
     if (s.state === 'posted' && s.shippedAt && (c.debt === 0 || s.credit) && (SM.flag('ship') || SM.isAdmin() || SM.can('sales', 2))) btn.push(html`<button class="btn btn-ok" data-x="done">${I('check')}Завершить</button>`);
-    if (s.state === 'posted' && (SM.flag('cancelOps') || SM.isAdmin())) btn.push(html`<button class="btn btn-danger" data-x="cancel">${I('undo')}Отменить</button>`);
+    if (s.state === 'posted' && (SM.flag('cancelOps') || SM.isAdmin())) btn.push(html`<button class="btn btn-ghost" data-x="cancel">${I('undo')}Отменить</button>`);
+    if (SM.canDeleteSale(s)) btn.push(html`<button class="btn btn-danger" data-x="delete">${I('trash')}Удалить</button>`);
     const dr = UI.drawer({ title: 'Продажа ' + s.no, sub: F.cur(c.total, s.cur) + ' · ' + cl.name, head: html`<span class="note-ic accent">${I('cart')}</span>`, body: html`<div class="row mb-16">${UI.badge(SM.SALE_STATUS[stt])}${UI.badge(SM.payStatus(s))}${s.state !== 'draft' && s.state !== 'cancelled' ? UI.badge(SM.shipStatus(s)) : ''}</div>${body}`, foot: btn.length ? html`${btn}` : null, size: 'wide' });
     SM.trackDrawer(SM.openSale, [id], dr, '#/sales');
     const on = (sel, fn) => { const b = dr.querySelector(sel); if (b) b.onclick = fn; };
-    on('[data-x=ready]', () => { SM.ops.saleReady(s); UI.toast('Собрано', s.no + ' готово к отгрузке'); SM.refresh(); });
-    on('[data-x=ship]', () => { SM.ops.saleShip(s); UI.toast('Отгружено', s.no); SM.refresh(); });
+    on('[data-x=ready]', () => { SM.ops.saleReady(s); UI.toast('Собрано', s.no + ' готово к отгрузке', 'ok', { icon: 'box' }); SM.refresh(); });
+    on('[data-x=ship]', () => { SM.ops.saleShip(s); UI.toast('Отгружено', s.no, 'ok', { icon: 'truck' }); SM.refresh(); });
     on('[data-x=done]', () => { SM.ops.saleDone(s); UI.toast('Продажа завершена', s.no); SM.refresh(); });
     on('[data-x=pay]', () => SM.payModal({ sale: s }));
+    on('[data-x=delete]', () => SM.deleteSaleAsk(s));
     on('[data-x=cancel]', async () => {
       const why = await UI.prompt(s.state === 'draft' ? 'Удалить черновик ' + s.no + '?' : 'Отменить продажу ' + s.no + '?', s.state === 'draft' ? 'Резерв товара снимется.' : s.shippedAt ? 'Товар уже отгружен — остатки не изменятся, оформите возврат отдельно.' : 'Товар вернётся на точку корректирующей записью. Документ не удаляется (ТЗ 21).', { ok: 'Отменить', danger: true });
       if (!why) return;
-      SM.ops.saleCancel(s, why); UI.toast('Продажа отменена', s.no, 'warn'); SM.refresh();
+      SM.ops.saleCancel(s, why); UI.toast('Продажа отменена', s.no + ' · товар возвращён на склад', 'warn', { icon: 'undo' }); SM.refresh();
     });
-    UI.$$('[data-pay-ok]', dr).forEach((b) => (b.onclick = () => { SM.ops.confirmPayment(b.dataset.payOk, true); UI.toast('Оплата подтверждена'); SM.refresh(); }));
+    UI.$$('[data-pay-ok]', dr).forEach((b) => (b.onclick = () => { SM.ops.confirmPayment(b.dataset.payOk, true); UI.toast('Оплата подтверждена', 'Статус продажи обновлён', 'ok', { icon: 'wallet' }); SM.refresh(); }));
     UI.$$('[data-pay-no]', dr).forEach((b) => (b.onclick = async () => { const why = await UI.prompt('Отклонить оплату?', 'Деньги не поступили или сумма не совпадает', { ok: 'Отклонить', danger: true }); if (!why) return; SM.ops.confirmPayment(b.dataset.payNo, false, why); UI.toast('Оплата отклонена', why, 'warn'); SM.refresh(); }));
     UI.$$('[data-doc]', dr).forEach((b) => (b.onclick = () => SM.docFromSale && SM.docFromSale(b.dataset.doc, s)));
   };
@@ -339,25 +364,39 @@
   SM.payModal = function ({ sale, clientId, dir = 'in' }) {
     const cid = sale ? sale.clientId : clientId;
     const cl = SM.client(cid);
-    const debt = sale ? SM.saleCalc(sale).debt : Math.abs(SM.balance(cid));
+    // предел: долг без оплат, которые уже ждут проверки бухгалтера
+    const debt = sale ? Math.max(0, SM.saleCalc(sale).debt - SM.saleCalc(sale).pending) : Math.abs(SM.balance(cid));
     const debtCur = sale ? sale.cur : 'UZS';
     const out = dir === 'out';
     const m = UI.modal({ title: out ? 'Оплата поставщику' : sale ? 'Оплата по ' + sale.no : 'Погашение задолженности', sub: cl.name + ' · ' + (out ? 'мы должны ' : 'долг ') + F.cur(debt, debtCur),
       body: html`<form class="form-grid" autocomplete="off">
         <div class="field"><label>Способ</label><select class="select" name="method">${UI.options(SM.methods().map((x) => [x.id, x.name]), out ? 'bank' : 'cash_uzs')}</select></div>
-        <div class="field"><label>Сумма <span class="req">*</span></label><div class="input-suffix"><input class="input num" type="number" name="amount" min="0" step="any" autofocus><em data-cur>сум</em></div><span class="hint" data-hint></span></div>
+        <div class="field"><label>Сумма <span class="req">*</span></label><div class="input-suffix"><input class="input" name="amount" ${UI.moneyAttrs(0)} autofocus><em data-cur>сум</em></div><span class="hint" data-hint></span></div>
         <div class="field full"><label>Комментарий</label><input class="input" name="note" placeholder="Номер платёжки, чека…"></div>
         <p class="full fs-12 muted">${SM.flag('confirmPay') ? 'Операция будет сразу подтверждена.' : 'Оплата уйдёт бухгалтеру на подтверждение.'} Курс $ берётся текущий и сохраняется в операции.</p></form>`,
       foot: html`<button class="btn btn-ghost" data-close>Отмена</button><button class="btn btn-primary" data-ok>${I('check')}Провести</button>` });
     const f = m.querySelector('form');
-    const sync = () => { const me = SM.method(f.method.value); m.querySelector('[data-cur]').textContent = me.cur === 'USD' ? '$' : 'сум'; const full = SM.conv(debt, debtCur, me.cur, SM.rate(me.rate)); m.querySelector('[data-hint]').innerHTML = 'Весь долг: <a href="#" data-full>' + SM.esc(F.cur(full, me.cur)) + '</a>'; m.querySelector('[data-full]').onclick = (e) => { e.preventDefault(); f.amount.value = Math.round(full * 100) / 100; }; };
+    const sync = () => {
+      const me = SM.method(f.method.value), full = Math.round(SM.conv(debt, debtCur, me.cur, SM.rate(me.rate)) * 100) / 100;
+      m.querySelector('[data-cur]').textContent = me.cur === 'USD' ? '$' : 'сум';
+      // больше долга ввести нельзя (ТЗ 13): поле само остановится на пределе
+      f.amount.dataset.dec = me.cur === 'USD' ? 2 : 0;
+      UI.setMax(f.amount, full);
+      if (UI.num(f.amount.value) > full) UI.setMoney(f.amount, full);
+      m.querySelector('[data-hint]').innerHTML = (out ? 'Мы должны: ' : 'Весь долг: ') + '<a href="#" data-full>' + SM.esc(F.cur(full, me.cur)) + '</a> · больше ввести нельзя';
+      m.querySelector('[data-full]').onclick = (e) => { e.preventDefault(); UI.setMoney(f.amount, full); };
+    };
     f.method.addEventListener('change', sync); sync();
     m.querySelector('[data-ok]').onclick = () => {
       const d = UI.formData(f);
-      if (!(+d.amount > 0)) return UI.invalid(f, 'amount', 'Введите сумму');
-      if (!sale && !out) SM.ops.repayDebt(cid, { method: d.method, amount: +d.amount, note: d.note });
-      else SM.ops.addPayment(sale || null, { method: d.method, amount: +d.amount, note: d.note, clientId: cid, dir });
-      UI.closeTop(); UI.toast(SM.flag('confirmPay') ? 'Оплата проведена' : 'Оплата отправлена на проверку', F.cur(+d.amount, SM.method(d.method).cur)); SM.refresh();
+      const amount = UI.num(d.amount);
+      if (!(debt > 0)) return UI.invalid(f, 'amount', 'Долга нет — платить нечего');
+      if (!(amount > 0)) return UI.invalid(f, 'amount', 'Введите сумму');
+      if (!sale && !out) SM.ops.repayDebt(cid, { method: d.method, amount, note: d.note });
+      else SM.ops.addPayment(sale || null, { method: d.method, amount, note: d.note, clientId: cid, dir });
+      UI.closeTop();
+      UI.toast(SM.flag('confirmPay') ? (out ? 'Оплата поставщику проведена' : 'Оплата принята') : 'Оплата отправлена бухгалтеру', F.cur(amount, SM.method(d.method).cur) + ' · ' + cl.name, SM.flag('confirmPay') ? 'ok' : 'info', { icon: out ? 'send' : 'wallet' });
+      SM.refresh();
     };
   };
 
@@ -390,7 +429,7 @@
       const dup = SM.db.clients.find((x) => x.id !== c.id && (x.phone.replace(/\D/g, '') === d.phone.replace(/\D/g, '') || (d.inn && x.inn && x.inn.replace(/\D/g, '') === d.inn.replace(/\D/g, ''))));
       if (dup && !confirm('Похожий контрагент уже есть: ' + dup.name + '. Всё равно сохранить?')) return;
       const saved = SM.ops.saveClient(Object.assign({ id: c.id }, d));
-      UI.closeTop(); UI.toast('Сохранено', saved.name);
+      UI.closeTop(); UI.toast(c.id ? 'Контрагент изменён' : 'Контрагент создан', saved.name, 'ok', { icon: 'users' });
       if (after) after(saved); else SM.refresh();
     };
   };
@@ -426,7 +465,7 @@
     if (SM.can('debts')) btn.push(html`<button class="btn btn-secondary" data-x="act">${I('file')}Акт сверки</button>`);
     if (b > 0.5 && (SM.can('debts', 2) || SM.can('sales', 2))) btn.push(html`<button class="btn btn-primary" data-x="pay">${I('wallet')}Погасить долг</button>`);
     if (b < -0.5 && SM.can('cash', 2)) btn.push(html`<button class="btn btn-primary" data-x="payout">${I('send')}Оплатить поставщику</button>`);
-    if (SM.can('clients', 2)) btn.push(html`<button class="btn btn-ghost" data-x="edit">${I('edit')}Изменить</button>`);
+    if (SM.can('clients', 2)) btn.push(html`<button class="btn btn-ghost" data-x="edit">${I('edit')}Изменить</button>`, html`<button class="btn btn-danger" data-x="delete">${I('trash')}Удалить</button>`);
     if (SM.can('sales', 2) && c.kind !== 'supplier') btn.push(html`<a class="btn btn-ghost" href="#/sales/new?client=${c.id}">${I('plus')}Продажа</a>`);
     const dr = UI.drawer({ title: c.name, sub: c.phone + (c.inn ? ' · ИНН ' + c.inn : ''), head: UI.avatar(c.name, c.id, 'lg'), body, foot: btn.length ? html`${btn}` : null });
     SM.trackDrawer(SM.openClient, [id], dr, '#/clients');
@@ -435,6 +474,7 @@
     on('[data-x=pay]', () => SM.payModal({ clientId: id }));
     on('[data-x=payout]', () => SM.payModal({ clientId: id, dir: 'out' }));
     on('[data-x=edit]', () => SM.clientForm(c));
+    on('[data-x=delete]', () => SM.deleteClientAsk(c));
   };
   function clientsPage(r) {
     const q = (r.q.q || '').toLowerCase(), tab = r.q.tab || 'all';
@@ -445,11 +485,19 @@
       ${UI.pageHead('Клиенты и контрагенты', 'Покупатели и поставщики: контакты, реквизиты, история и задолженность', SM.can('clients', 2) ? html`<button class="btn btn-primary" data-x="new">${I('plus')}Новый контрагент</button>` : '')}
       ${UI.tabs([['all', 'Все', base.length], ['client', 'Клиенты', n('client')], ['supplier', 'Поставщики', n('supplier')]], tab)}
       <div class="card"><div class="card-h">${UI.searchInput(r.q.q, 'Название, Ф.И.О., телефон, ИНН')}</div>
-        <div class="card-b" style="padding-top:12px">${list.length ? html`<div class="table-wrap"><table class="table"><thead><tr><th>Контрагент</th><th>Тип</th><th>Телефон</th><th>Ответственный</th><th class="r">Сальдо</th></tr></thead><tbody>
+        <div class="card-b" style="padding-top:12px">${list.length ? html`<div class="table-wrap"><table class="table"><thead><tr><th>Контрагент</th><th>Тип</th><th>Телефон</th><th>Ответственный</th><th class="r">Сальдо</th><th></th></tr></thead><tbody>
           ${list.map((c) => { const b = SM.balance(c.id); return html`<tr class="click" data-act="open-client" data-id="${c.id}"><td><div class="row nowrap">${UI.avatar(c.name, c.id, 'sm')}<div><span class="cell-title">${c.name}</span><span class="cell-sub">${c.contact || c.address || ''}</span></div></div></td>
             <td><span class="chip">${c.kind === 'supplier' ? 'поставщик' : c.kind === 'both' ? 'клиент/поставщик' : 'клиент'}</span> <span class="chip">${c.type === 'legal' ? 'юрлицо' : 'физлицо'}</span></td><td class="nowrap">${c.phone}</td><td>${c.sellerId ? SM.user_(c.sellerId).name : html`<span class="muted">—</span>`}</td>
-            <td class="r nowrap">${Math.abs(b) < 0.5 ? html`<span class="muted">0</span>` : html`<b class="${b > 0 ? 'bad-t' : 'warn-t'}">${b > 0 ? '' : '−'}${F.m(Math.abs(b))}</b><span class="cell-sub">${b > 0 ? 'должен нам' : 'мы должны'}</span>`}</td></tr>`; })}</tbody></table></div>` : UI.empty('Никого не найдено', 'Измените поиск или добавьте контрагента', 'users')}</div></div>`;
+            <td class="r nowrap">${Math.abs(b) < 0.5 ? html`<span class="muted">0</span>` : html`<b class="${b > 0 ? 'bad-t' : 'warn-t'}">${b > 0 ? '' : '−'}${F.m(Math.abs(b))}</b><span class="cell-sub">${b > 0 ? 'должен нам' : 'мы должны'}</span>`}</td>
+            <td class="td-act">${SM.can('clients', 2) ? UI.actBtns(c.id, { editTip: 'Изменить контрагента', delTip: 'Удалить контрагента' }) : ''}</td></tr>`; })}</tbody></table></div>` : UI.empty('Никого не найдено', 'Измените поиск или добавьте контрагента', 'users')}</div></div>`;
   }
+  /* удаление контрагента: только без операций, иначе сломаются продажи и взаиморасчёты */
+  SM.deleteClientAsk = async function (c) {
+    const n = SM.clientLinks(c.id);
+    if (n) return UI.toast('Нельзя удалить ' + c.name, 'У контрагента есть операции (' + n + '): сначала удалите его продажи и оплаты', 'bad', { icon: 'lock' });
+    if (!(await UI.confirmDelete('Удалить контрагента?', c.name + ' будет удалён без возможности восстановления.'))) return;
+    SM.ops.deleteClient(c); UI.closeAll(); UI.toast('Контрагент удалён', c.name, 'ok', { icon: 'trash' }); SM.refresh();
+  };
 
   /* ---------- Задолженности и акт сверки (ТЗ 13) ---------- */
   SM.actHTML = function (clientId, from, to, no) {
@@ -534,7 +582,7 @@
       <form class="form-grid" autocomplete="off">
         <div class="field"><label>Водитель</label><select class="select" name="driverId" ${edit ? '' : 'disabled'}>${UI.options(SM.db.drivers.filter((d) => d.active).map((d) => [d.id, d.name + ' · ' + d.phone]), x.driverId, 'Не назначен')}</select></div>
         <div class="field"><label>Автомобиль</label><select class="select" name="carId" ${edit ? '' : 'disabled'}>${UI.options(SM.db.cars.filter((c) => c.active).map((c) => [c.id, c.model + ' · ' + c.plate]), x.carId, 'Не назначен')}</select></div>
-        <div class="field"><label>Стоимость, сум</label><input class="input num" type="number" name="cost" min="0" step="1000" value="${x.cost || 0}" ${edit ? '' : 'disabled'}></div>
+        <div class="field"><label>Стоимость, сум</label><input class="input" name="cost" ${UI.moneyAttrs(100000000)} value="${UI.fmtInput(x.cost || 0)}" ${edit ? '' : 'disabled'}></div>
         <div class="field"><label>Направление</label><input class="input" name="direction" value="${x.direction || ''}" ${edit ? '' : 'disabled'}></div>
         <label class="switch full"><input type="checkbox" name="paid" ${x.paid ? 'checked' : ''} ${edit ? '' : 'disabled'}><i></i>Платная доставка</label></form>
       <div class="section-t">История</div><ul class="timeline">${x.history.slice().reverse().map((h, i) => html`<li class="${i === 0 ? 'on' : ''}"><b>${h.text}</b><small>${F.dt(h.at)} · ${SM.user_(h.uid).name}</small></li>`)}</ul>`;
@@ -548,9 +596,9 @@
     const dr = UI.drawer({ title: 'Доставка ' + x.no, sub: SM.DELIVERY_STATUS[x.status][0] + ' · ' + SM.client(x.clientId).name, head: html`<span class="note-ic info">${I('truck')}</span>`, body, foot: btn.length ? html`${btn}` : null });
     SM.trackDrawer(SM.openDelivery, [id], dr, '#/delivery');
     const f = dr.querySelector('form');
-    const patch = () => { const d = UI.formData(f); return { driverId: d.driverId || null, carId: d.carId || null, cost: +d.cost || 0, direction: d.direction, paid: !!d.paid }; };
+    const patch = () => { const d = UI.formData(f); return { driverId: d.driverId || null, carId: d.carId || null, cost: UI.num(d.cost), direction: d.direction, paid: !!d.paid }; };
     const on = (sel, fn) => { const b = dr.querySelector(sel); if (b) b.onclick = fn; };
-    on('[data-x=save]', () => { SM.ops.deliveryUpdate(x, patch(), 'Изменены данные доставки'); UI.toast('Сохранено', x.no); SM.refresh(); });
+    on('[data-x=save]', () => { SM.ops.deliveryUpdate(x, patch(), 'Изменены данные доставки'); UI.toast('Доставка сохранена', x.no, 'ok', { icon: 'truck' }); SM.refresh(); });
     on('[data-x=next]', () => {
       const p = patch();
       const nx = { new: 'assigned', assigned: 'handed', handed: 'delivered' }[x.status];
@@ -572,7 +620,7 @@
         <div class="field full"><label>Адрес <span class="req">*</span></label><input class="input" name="address"></div>
         <div class="field"><label>Вид доставки</label><select class="select" name="kind">${UI.options(Object.entries(SM.DELIVERY_KIND), 'own')}</select></div>
         <div class="field"><label>Направление</label><input class="input" name="direction" placeholder="Район, город"></div>
-        <div class="field"><label>Стоимость, сум</label><input class="input num" type="number" name="cost" min="0" step="1000" value="0"></div>
+        <div class="field"><label>Стоимость, сум</label><input class="input" name="cost" ${UI.moneyAttrs(100000000)} value="0"></div>
         <label class="switch" style="align-self:end;margin-bottom:10px"><input type="checkbox" name="paid"><i></i>Платная</label>
         <div class="field full"><label>Комментарий</label><input class="input" name="comment"></div></form>`,
       foot: html`<button class="btn btn-ghost" data-close>Отмена</button><button class="btn btn-primary" data-ok>${I('check')}Создать заявку</button>` });
@@ -583,8 +631,8 @@
       const d = UI.formData(f);
       if (!d.clientId) return UI.invalid(f, 'clientId', 'Выберите клиента');
       if (!d.address) return UI.invalid(f, 'address', 'Укажите адрес');
-      const x = SM.ops.createDelivery({ saleId: d.saleId || null, clientId: d.clientId, phone: d.phone, address: d.address, kind: d.kind, direction: d.direction, cost: +d.cost || 0, paid: !!d.paid, comment: d.comment, driverId: null, carId: null });
-      UI.closeTop(); UI.toast('Заявка создана', x.no); SM.refresh();
+      const x = SM.ops.createDelivery({ saleId: d.saleId || null, clientId: d.clientId, phone: d.phone, address: d.address, kind: d.kind, direction: d.direction, cost: UI.num(d.cost), paid: !!d.paid, comment: d.comment, driverId: null, carId: null });
+      UI.closeTop(); UI.toast('Заявка на доставку создана', x.no + ' · ' + SM.client(d.clientId).name, 'ok', { icon: 'truck' }); SM.refresh();
     };
   }
   function deliveryPage(r) {
@@ -609,7 +657,9 @@
     mount(el, r) {
       if (r.id === 'new' && SM.can('sales', 2)) return mountSaleForm(el, r);
       UI.bindSearch(el); UI.bindFilters(el); UI.bindPeriod(el);
-      UI.$$('[data-st]', el).forEach((b) => (b.onclick = () => SM.setQuery({ st: SM.route().q.st === b.dataset.st ? '' : b.dataset.st }, true)));
+      // карандаш и корзина в строке (не открывают карточку продажи)
+      UI.$$('[data-edit]', el).forEach((b) => (b.onclick = (e) => { e.stopPropagation(); location.hash = '#/sales/new?edit=' + b.dataset.edit; }));
+      UI.$$('[data-del]', el).forEach((b) => (b.onclick = (e) => { e.stopPropagation(); SM.deleteSaleAsk(SM.db.sales.find((s) => s.id === b.dataset.del)); }));
       const ex = el.querySelector('[data-x=export]');
       if (ex) ex.onclick = () => UI.exportXLSX('Продажи_' + D.todayISO(), [['№', 'Дата', 'Клиент', 'Точка', 'Продавец', 'Валюта', 'Курс', 'Сумма', 'Оплачено', 'Долг', 'Сумма в сумах', 'Статус'],
         ...SM.db.sales.filter((s) => SM.saleVisible(s)).map((s) => { const c = SM.saleCalc(s); return [s.no, F.date(s.date), SM.client(s.clientId).name, SM.point(s.pointId).name, SM.user_(s.sellerId).name, s.cur, s.rate, Math.round(c.total * 100) / 100, Math.round(c.paid * 100) / 100, Math.round(c.debt * 100) / 100, Math.round(SM.saleTotalUZS(s)), SM.SALE_STATUS[SM.saleStatus(s)][0]]; })], 'Продажи');
@@ -621,6 +671,8 @@
     mount(el, r) {
       UI.bindSearch(el); UI.bindTabs(el);
       const n = el.querySelector('[data-x=new]'); if (n) n.onclick = () => SM.clientForm(null);
+      UI.$$('[data-edit]', el).forEach((b) => (b.onclick = (e) => { e.stopPropagation(); SM.clientForm(SM.client(b.dataset.edit)); }));
+      UI.$$('[data-del]', el).forEach((b) => (b.onclick = (e) => { e.stopPropagation(); SM.deleteClientAsk(SM.client(b.dataset.del)); }));
       if (r.q.new && SM.can('clients', 2)) { history.replaceState(null, '', '#/clients'); SM.clientForm(null); }
       if (r.id) SM.openClient(r.id);
     },

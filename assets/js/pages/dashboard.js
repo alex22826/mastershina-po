@@ -47,8 +47,6 @@
     const cashU = SM.accountReport('cash_uzs', today(), today()), cashD = SM.accountReport('cash_usd', today(), today()), bank = SM.accountReport('bank', today(), today());
     const low = SM.lowStock();
     const units = SM.db.products.reduce((a, x) => a + Math.max(0, SM.qty(x.id)), 0);
-    const sellers = SM.db.users.filter((u) => u.role === 'seller').map((u) => { const l = sPer.filter((s) => s.sellerId === u.id); return { label: u.name, value: SM.sumUZS(l), extra: '· ' + l.length + ' ' + F.plural(l.length, 'продажа', 'продажи', 'продаж') }; }).sort((a, b) => b.value - a.value);
-    const notes = SM.notesFor().slice(0, 5);
     const spark = SM.dayLabels(7).map((d) => SM.sumUZS(SM.salesIn(d, d)));
     return html`
       ${UI.pageHead(greet() + ', ' + SM.user.name.split(' ')[0], 'Сводка по компании · ' + F.date(today()) + ' · курс $ ' + F.num(SM.rate()), html`${UI.periodSeg(p, SM.PERIODS.slice(0, 3))}${SM.can('sales', 2) ? html`<a class="btn btn-primary" href="#/sales/new">${I('plus')}Новая продажа</a>` : ''}`)}
@@ -71,10 +69,6 @@
             <div class="cash-acc"><span>${I('coins')}Расходы · ${R.label}</span><b class="bad-t">${F.short(expSum)}</b></div></div>`, SM.can('cash') ? html`<a class="btn btn-ghost btn-sm" href="#/cash">Касса${I('arrowRight')}</a>` : '')}
         ${card('Остатки товаров', 'layers', html`<div class="row between"><div><div class="fs-12 muted fw-7">На всех точках</div><div class="fs-18 fw-8 num">${F.num(units)} ед.</div></div><div class="r"><div class="fs-12 muted fw-7">Позиций</div><div class="fs-18 fw-8">${SM.db.products.length}</div></div></div>
             <div class="section-t mt-16">Низкий остаток</div>${low.length ? html`<ul class="list">${low.slice(0, 4).map((x) => html`<li class="click" data-act="open-product" data-id="${x.id}">${UI.thumb(x)}<div class="grow"><b class="fs-13 ellipsis" style="display:block">${x.name}</b><div class="fs-12 muted">мин. ${x.min} ${x.unit}</div></div><span class="badge b-warn">${SM.qty(x.id)} ${x.unit}</span></li>`)}</ul>` : html`<p class="muted fs-13">Всего хватает</p>`}`, html`<a class="btn btn-ghost btn-sm" href="#/stock">Остатки${I('arrowRight')}</a>`)}
-      </div>
-      <div class="grid g-21 mt-16 stagger">
-        ${card('Показатели продавцов · ' + R.label, 'users', sellers.length ? UI.hbars(sellers) : UI.empty('Нет продавцов'), html`<a class="btn btn-ghost btn-sm" href="#/reports?tab=sellers">Подробно${I('arrowRight')}</a>`)}
-        ${card('Важные события', 'bell', notes.length ? html`<ul class="list">${notes.map(SM.noteRow)}</ul>` : UI.empty('Нет событий'), html`<a class="btn btn-ghost btn-sm" href="#/notifications">Все${I('arrowRight')}</a>`)}
       </div>`;
   }
 
@@ -110,22 +104,21 @@
     const vis = SM.db.sales.filter((s) => SM.saleVisible(s) && s.state === 'posted');
     const toPick = vis.filter((s) => SM.canReady(s));
     const toShip = vis.filter((s) => s.readyAt && !s.shippedAt);
-    const incoming = SM.db.transfers.filter((t) => t.status === 'sent' && SM.pointVisible(t.to));
+    const units = SM.db.products.reduce((a, x) => a + Math.max(0, SM.qty(x.id)), 0);
     const low = SM.lowStock();
     const actBtn = (s) => SM.flag('ship') ? (SM.canReady(s) ? html`<button class="btn btn-soft btn-sm" data-x="ready" data-id="${s.id}">${I('box')}Собрано</button>` : html`<button class="btn btn-primary btn-sm" data-x="ship" data-id="${s.id}">${I('truck')}Отгрузить</button>`) : '';
     return html`
-      ${UI.pageHead(greet() + ', ' + SM.user.name.split(' ')[0], 'Склад: ' + SM.user.points.map((p) => SM.point(p).name).join(', '), html`<a class="btn btn-secondary" href="#/transfers?new=1">${I('repeat')}Перемещение</a><a class="btn btn-primary" href="#/receipts?new=1">${I('inbox')}Поступление</a>`)}
+      ${UI.pageHead(greet() + ', ' + SM.user.name.split(' ')[0], 'Склад: ' + SM.user.points.map((p) => SM.point(p).name).join(', '), html`<a class="btn btn-primary" href="#/receipts?new=1">${I('inbox')}Поступление</a>`)}
       <div class="grid g-4 keep-2 stagger">
         ${UI.kpi({ label: 'Собрать заказы', icon: 'box', value: toPick.length, count: toPick.length, foot: 'оплачены или в долг', cls: toPick.length ? 'k-accent' : '' })}
         ${UI.kpi({ label: 'Ждут отгрузки', icon: 'truck', value: toShip.length, count: toShip.length, foot: 'собраны, клиент или водитель забирает' })}
-        ${UI.kpi({ label: 'Перемещения к вам', icon: 'repeat', value: incoming.length, count: incoming.length, foot: 'в пути, примите после проверки', href: '#/transfers' })}
+        ${UI.kpi({ label: 'Товаров на складе', icon: 'layers', value: F.num(units), count: units, unit: 'ед.', foot: SM.db.products.length + ' позиций', href: '#/stock' })}
         ${UI.kpi({ label: 'Низкий остаток', icon: 'alert', value: low.length, count: low.length, foot: 'позиций ниже минимума', href: '#/stock?low=1' })}
       </div>
-      <div class="grid g-2 mt-16 stagger">
+      <div class="grid g-21 mt-16 stagger">
         ${card('Заявки на сборку и отгрузку', 'box', toPick.length + toShip.length ? html`<ul class="list">${toPick.concat(toShip).map((s) => saleLi(s, actBtn(s)))}</ul>` : UI.empty('Заявок нет', 'Все заказы отгружены', 'check'))}
-        ${card('Перемещения в пути', 'repeat', incoming.length ? html`<ul class="list">${incoming.map((t) => html`<li class="click" data-href="#/transfers/${t.id}"><span class="note-ic info">${I('repeat')}</span><div class="grow"><b class="fs-13">${t.no} · ${SM.point(t.from).name} → ${SM.point(t.to).name}</b><div class="fs-12 muted">${t.items.length} поз. · ${t.items.reduce((a, l) => a + l.qty, 0)} ед.</div></div>${UI.badge(SM.TRANSFER_STATUS[t.status])}</li>`)}</ul>` : UI.empty('Нет перемещений в пути'))}
-      </div>
-      <div class="mt-16">${card('Низкий остаток', 'alert', low.length ? html`<div class="table-wrap"><table class="table compact"><thead><tr><th>Товар</th><th class="r">Всего</th><th class="r">Минимум</th><th class="r">Доступно</th></tr></thead><tbody>${low.map((x) => html`<tr class="click" data-act="open-product" data-id="${x.id}"><td><span class="cell-title">${x.name}</span><span class="cell-sub">${x.code}</span></td><td class="r stock-cell low">${SM.qty(x.id)}</td><td class="r">${x.min}</td><td class="r">${SM.available(x.id)}</td></tr>`)}</tbody></table></div>` : UI.empty('Всего хватает', '', 'check'))}</div>`;
+        ${card('Низкий остаток', 'alert', low.length ? html`<ul class="list">${low.map((x) => html`<li class="click" data-act="open-product" data-id="${x.id}">${UI.thumb(x)}<div class="grow"><b class="fs-13">${x.name}</b><div class="fs-12 muted">мин. ${x.min} ${x.unit}</div></div><span class="badge b-warn">${SM.qty(x.id)} ${x.unit}</span></li>`)}</ul>` : UI.empty('Всего хватает', '', 'check'), html`<a class="btn btn-ghost btn-sm" href="#/stock">Остатки${I('arrowRight')}</a>`)}
+      </div>`;
   }
 
   /* ---------- Бухгалтер ---------- */

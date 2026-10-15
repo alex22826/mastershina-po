@@ -3,105 +3,143 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#060708">
+  <meta name="theme-color" content="#0b0c0f">
   <title>УИ-кит · SM AVTO BASE</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="assets/css/admin.css?v=1">
+  <script>
+    /* тема как в системе: светлая 8:00–18:00, тёмная 18:00–8:00 */
+    (function () { var h = new Date().getHours(); document.documentElement.setAttribute('data-theme', h >= 8 && h < 18 ? 'light' : 'dark'); })();
+  </script>
+  <link rel="stylesheet" href="assets/css/admin.css?v=4">
   <style>
+    body { background: var(--bg); }
     .sg { max-width: 1240px; margin: 0 auto; padding: 32px 24px 80px; }
     .sg-sec { margin-top: 40px; }
-    .sg-sec > h2 { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; font-size: 20px; }
-    .sg-sec > h2 small { font-size: 12px; color: var(--text-3); font-weight: 700; }
-    .sg-mini-side { width: 264px; border-radius: 18px; overflow: hidden; border: 1px solid var(--line); background: var(--sidebar); }
+    .sg-sec > h2 { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; font-size: 20px; }
+    .sg-sec > h2 small { font-size: 12px; color: var(--text-3); font-weight: 600; }
+    .sg-swatch { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line); }
+    .sg-swatch i { width: 40px; height: 40px; border-radius: 11px; flex: none; border: 1px solid var(--line-2); }
+    .sg-swatch b { font-size: 13px; }
+    .sg-swatch code { font: 500 11.5px var(--mono); color: var(--text-3); }
+    .sg-type > div { display: grid; grid-template-columns: 150px 1fr; gap: 16px; align-items: baseline; padding: 12px 0; border-bottom: 1px dashed var(--line); }
+    .sg-type > div:last-child { border-bottom: 0; }
+    .sg-type span { font: 600 11.5px var(--mono); color: var(--text-3); }
+    .sg-mini-side { width: 264px; border-radius: 18px; overflow: hidden; border: 1px solid var(--line); background: var(--sidebar); flex: none; }
     .sg-mini-side .sb-in { height: auto; }
     .sg-mini-side .sb-nav { overflow: visible; -webkit-mask: none; mask: none; }
-    @media (max-width: 720px) { .sg { padding: 20px 14px 60px; } }
+    .sg-mini-side .sb-fade { opacity: 1; visibility: visible; }
+    .sg-mini-side .sb-group::before { display: none; }
+    .sg-rail { width: 76px; }
+    .sg-rail .sb-fade { opacity: 0; visibility: hidden; }
+    .sg-rail .sb-group::before { display: block; }
+    @media (max-width: 720px) { .sg { padding: 20px 14px 60px; } .sg-type > div { grid-template-columns: 1fr; gap: 4px; } .sg-mini-side { width: 100%; } .sg-rail { display: none; } }
   </style>
 </head>
 <body>
   <div class="sg" id="sg"></div>
-  <script src="assets/js/core.js?v=1"></script>
-  <script src="assets/js/data.js?v=1"></script>
-  <script src="assets/js/ui.js?v=1"></script>
+  <script src="assets/js/core.js?v=4"></script>
+  <script src="assets/js/data.js?v=4"></script>
+  <script src="assets/js/ui.js?v=4"></script>
   <script>
   (function () {
     var SM = window.SM, UI = SM.ui, html = SM.html, raw = SM.raw, I = UI.icon, F = SM.fmt;
     SM.load();
-    var sw = function (name, v, note) { return html`<div class="sg-swatch"><i style="background:${v}"></i><div><b>${name}</b><br><code>${note || v}</code></div></div>`; };
+    var sw = function (name, v, note) { return html`<div class="sg-swatch"><i style="background:${v}"></i><div><b>${name}</b><br><code>${note}</code></div></div>`; };
     var sec = function (t, sub, body) { return html`<section class="sg-sec"><h2>${t}<small>${sub}</small></h2>${body}</section>`; };
-    var sale = SM.db.sales[2];
+    var sale = SM.db.sales[0];
     // последние n дней (в системе это SM.dayLabels из app.js — здесь он не подключён)
     var days = function (n) { var out = []; for (var i = n - 1; i >= 0; i--) out.push(SM.d.iso(SM.d.addDays(SM.d.today(), -i))); return out; };
+    var link = function (icon, t, on, cnt, bad) { return html`<a class="sb-link ${on ? 'active' : ''}" href="#"><span class="tile">${I(icon)}</span><span class="sb-fade">${t}</span>${cnt ? html`<span class="sb-count ${bad ? 'bad' : ''}">${cnt}</span>` : ''}</a>`; };
+    var side = function (rail) { return html`<div class="sg-mini-side ${rail ? 'sg-rail' : ''}"><div class="sb-in"><a class="sb-brand" href="#">${UI.logoMark()}<span class="sb-fade"><b>SM <em>AVTO BASE</em></b><small>Учётная система</small></span></a>
+      <nav class="sb-nav"><div class="sb-group"><span class="sb-fade">Продажи</span>${link('cart', 'Продажи', true, 3)}${link('users', 'Клиенты и контрагенты')}${link('truck', 'Доставка', false, 1, true)}</div>
+      <div class="sb-group"><span class="sb-fade">Склад</span>${link('tire', 'Товары')}${link('layers', 'Остатки')}${link('inbox', 'Поступления')}</div></nav>
+      <div class="sb-user">${UI.avatar('Тимур Асадов', 'u-admin')}<div class="who sb-fade"><b>Тимур Асадов</b><small>Администратор</small></div></div></div></div>`; };
+    var dark = function () { return document.documentElement.getAttribute('data-theme') === 'dark'; };
+
     document.getElementById('sg').innerHTML = String(html`
       <div class="row between">
         <div class="row nowrap">${UI.logoMark()}<div><h1 style="font-size:28px">SM <span class="accent-t">AVTO BASE</span> · УИ-кит</h1><p class="muted mt-4">Стили, шрифты, кнопки, формы, сайдбар и разделы системы — продолжение страницы входа</p></div></div>
-        <div class="row"><a class="btn btn-secondary" href="index.html">${I('arrowLeft')}Вход</a><a class="btn btn-primary" href="admin.html">Открыть систему${I('arrowRight')}</a></div>
+        <div class="row"><button class="btn btn-secondary" id="dTheme">${I('sun')}Сменить тему</button><a class="btn btn-secondary" href="index.html">${I('arrowLeft')}Вход</a><a class="btn btn-primary" href="admin.html">Открыть систему${I('arrowRight')}</a></div>
       </div>
 
-      ${sec('Цвета', 'токены в :root, admin.css', html`<div class="grid g-5 keep-2">
-        ${sw('Фон', 'var(--bg)', '#060708')}${sw('Панель', 'var(--panel)', '#0f1013')}${sw('Сайдбар', 'var(--sidebar)', '#040405')}${sw('Акцент', 'var(--accent)', '#9c1c3a — как на входе')}${sw('Свечение', 'var(--glow)', '#ff3b5c')}
-        ${sw('Акцент-текст', 'var(--accent-t)', '#ff6b86 — контраст ≥ 4,5:1')}${sw('Успех', 'var(--ok)', '#3ddc97')}${sw('Внимание', 'var(--warn)', '#f5a623')}${sw('Ошибка', 'var(--bad)', '#ff6b86')}${sw('Инфо', 'var(--info)', '#6aa8ff')}</div>`)}
+      ${sec('Цвета', 'токены в :root[data-theme] — тёмная (18:00–8:00) и светлая (8:00–18:00) темы', html`<div class="grid g-5 keep-2">
+        ${sw('Фон', 'var(--bg)', '#0b0c0f / #f2f3f7')}${sw('Панель', 'var(--panel)', '#16171d / #ffffff')}${sw('Сайдбар', 'var(--sidebar)', '#101116 / #ffffff')}${sw('Акцент', 'var(--accent)', '#9c1c3a — как на входе')}${sw('Свечение', 'var(--glow)', '#ff3b5c / #e0244c')}
+        ${sw('Акцент-текст', 'var(--accent-t)', '#ff6f8a / #b0163e')}${sw('Успех', 'var(--ok)', '#3ddc97 / #0a8452')}${sw('Внимание', 'var(--warn)', '#f5a623 / #a35a00')}${sw('Ошибка', 'var(--bad)', '#ff6f8a / #c41f44')}${sw('Инфо', 'var(--info)', '#6aa8ff / #1d5bd0')}</div>`)}
 
-      ${sec('Шрифты', 'Manrope — интерфейс, JetBrains Mono — коды и артикулы (локально, без Google Fonts)', html`<div class="card"><div class="card-b sg-type">
-        <div><span>H1 · 26/800</span><h1>Продажи за неделю</h1></div>
-        <div><span>H2 · 18/800</span><h2>Оплаты по способам</h2></div>
-        <div><span>H3 · 15.5/800</span><h3>Новые заказы и отгрузка</h3></div>
-        <div><span>Текст · 14/500</span><p>Система учёта шин, автозапчастей и сопутствующих товаров для магазинов и складов.</p></div>
-        <div><span>Цифры · tabular</span><p class="fs-18 fw-8 num">1 450 000 сум · $1 590,00 · 12 660</p></div>
-        <div><span>Моно · коды</span><p class="mono">SM-00001 · 1C-004512 · СП-0003</p></div></div></div>`)}
+      ${sec('Шрифты', 'Onest — интерфейс, Exo 2 — заголовки и цифры, JetBrains Mono — коды (локально, без Google Fonts)', html`<div class="card"><div class="card-b sg-type">
+        <div><span>H1 · Exo 2</span><h1>Продажи за неделю</h1></div>
+        <div><span>H2 · Exo 2</span><h2>Оплаты по способам</h2></div>
+        <div><span>H3 · Onest 700</span><h3>Новые заказы и отгрузка</h3></div>
+        <div><span>Текст · Onest 14</span><p>Система учёта шин, автозапчастей и сопутствующих товаров для магазинов и складов.</p></div>
+        <div><span>Цифры · разряды</span><p class="fs-18 fw-8 num">20 000 · 1 450 000 сум · 200 000 000 · $1 590,00</p></div>
+        <div><span>Моно · коды</span><p class="mono">SM-00001 · 1C-004512 · СП-0002</p></div></div></div>`)}
 
-      ${sec('Кнопки', 'основная с неоновым свечением, вторичная, мягкая, призрачная, успех, опасная, иконка', html`<div class="card"><div class="card-b stack">
-        <div class="row"><button class="btn btn-primary">${I('plus')}Новая продажа</button><button class="btn btn-secondary">${I('download')}Excel</button><button class="btn btn-soft">${I('box')}Собрано</button><button class="btn btn-ghost">Отмена</button><button class="btn btn-ok">${I('check')}Подтвердить</button><button class="btn btn-danger">${I('undo')}Отменить</button><button class="btn btn-icon" aria-label="Поиск">${I('search')}</button><button class="btn btn-primary loading">Сохранение</button><button class="btn btn-secondary" disabled>Недоступно</button></div>
-        <div class="row"><button class="btn btn-primary btn-sm">${I('plus')}Маленькая</button><button class="btn btn-primary">Обычная</button><button class="btn btn-primary btn-lg">${I('check')}Большая</button><button class="btn btn-neon"><span>Start</span>${I('arrowRight')}<span class="nt"><span>Start</span>${I('arrowRight')}</span></button></div></div></div>`)}
+      ${sec('Кнопки', 'основная с неоновым свечением, вторичная, мягкая, призрачная, успех, опасная, иконка, действия в строке', html`<div class="card"><div class="card-b stack">
+        <div class="row"><button class="btn btn-primary">${I('plus')}Новая продажа</button><button class="btn btn-secondary">${I('download')}Excel</button><button class="btn btn-soft">${I('box')}Собрано</button><button class="btn btn-ghost">Отмена</button><button class="btn btn-ok">${I('check')}Подтвердить</button><button class="btn btn-danger">${I('trash')}Удалить</button><button class="btn btn-icon" aria-label="Поиск">${I('search')}</button><button class="btn btn-primary loading">Сохранение</button><button class="btn btn-secondary" disabled>Недоступно</button></div>
+        <div class="row"><button class="btn btn-primary btn-sm">${I('plus')}Маленькая</button><button class="btn btn-primary">Обычная</button><button class="btn btn-primary btn-lg">${I('check')}Большая</button><button class="btn btn-neon"><span>Start</span>${I('arrowRight')}<span class="nt"><span>Start</span>${I('arrowRight')}</span></button>
+          <span class="muted fs-13">Изменить / удалить в строке таблицы:</span>${UI.actBtns('demo', { editTip: 'Изменить', delTip: 'Удалить' })}</div></div></div>`)}
 
-      ${sec('Формы', '«вдавленные» поля как на входе, свои выпадающие списки (на телефоне — шторка снизу)', html`<div class="card"><div class="card-b"><form class="form-grid g3" onsubmit="return false">
-        <div class="field"><label>Клиент <span class="req">*</span></label><select class="select">${UI.options(SM.db.clients.map((c) => [c.id, c.name]), 'c3')}</select></div>
+      ${sec('Формы', 'поля сумм с разрядами и пределом, свои выпадающие списки (на телефоне — шторка снизу)', html`<div class="card"><div class="card-b"><form class="form-grid g3" onsubmit="return false">
+        <div class="field"><label>Клиент <span class="req">*</span></label><select class="select">${UI.options(SM.db.clients.map((c) => [c.id, c.name]))}</select></div>
         <div class="field"><label>Поиск</label><label class="input-icon">${I('search')}<input class="input" placeholder="205/55 R16, колодки нексия"></label></div>
-        <div class="field"><label>Сумма</label><div class="input-suffix"><input class="input num" type="number" value="1450000"><em>сум</em></div></div>
+        <div class="field"><label>Сумма (не больше 5 800 000)</label><div class="input-suffix"><input class="input" id="dMoney" ${UI.moneyAttrs(5800000)}><em>сум</em></div><span class="hint">Разряды ставятся сами, больше долга ввести нельзя</span></div>
         <div class="field is-invalid"><label>Телефон <span class="req">*</span></label><input class="input" value="+998"><span class="hint">Укажите телефон полностью</span></div>
         <div class="field"><label>Дата</label><input class="input" type="date" value="${SM.d.todayISO()}"></div>
         <div class="field"><label>Маленькое поле</label><input class="input input-sm" placeholder="input-sm"></div>
         <div class="field full"><label>Комментарий</label><textarea class="textarea" placeholder="Многострочное поле"></textarea></div>
         <div class="field"><label>Валюта</label><div class="choice"><label><input type="radio" name="c" checked><span>Сум</span></label><label><input type="radio" name="c"><span>$ США</span></label></div></div>
         <div class="field"><label>Переключатели</label><div class="row"><label class="switch"><input type="checkbox" checked><i></i>НДС 12%</label><label class="check"><input type="checkbox" checked>В долг</label></div></div>
-        <div class="field"><label>Период</label><div class="seg"><button type="button">Сегодня</button><button type="button" class="on">7 дней</button><button type="button">30 дней</button></div></div></form></div></div>`)}
+        <div class="field"><label>Период</label><div class="seg"><button type="button">Сегодня</button><button type="button" class="on">7 дней</button><button type="button">30 дней</button></div></div>
+        <div class="field full"><label>Уровень доступа (Роли и права)</label><div class="lv" role="group">${['Нет', 'Просмотр', 'Изменение', 'Полный'].map((t, i) => html`<button type="button" class="${i === 2 ? 'on' : ''}" data-lv="${i}">${t}</button>`)}</div></div></form></div></div>`)}
 
-      ${sec('Статусы и метки', 'статусы продажи по ТЗ 9.2, оплаты, доставки, перемещения', html`<div class="card"><div class="card-b stack">
+      ${sec('Статусы и метки', 'статусы продажи по ТЗ 9.2, оплаты, доставки', html`<div class="card"><div class="card-b stack">
         <div class="row">${Object.values(SM.SALE_STATUS).map((s) => UI.badge(s))}</div>
         <div class="row">${Object.values(SM.PAY_STATUS).map((s) => UI.badge(s))}${Object.values(SM.DELIVERY_STATUS).map((s) => UI.badge(s))}<span class="badge b-warn b-pulse">2 на проверке</span></div>
         <div class="row"><span class="chip">${I('tag')}Летняя</span><span class="chip accent">«колодки нексия»</span><span class="chip site">${I('globe')}сайт</span><span class="chip code">SM-00013</span>${UI.avatar('Камола Иргашева', 'u-sel1')}${UI.avatar('Бекзод Турсунов', 'u-sklad', 'lg')}${UI.delta(120, 100)}${UI.delta(80, 100)}</div></div></div>`)}
 
-      ${sec('Карточки и показатели', 'KPI со счётчиком и мини-графиком, наведение как у карточек входа', html`<div class="grid g-4 keep-2">
-        ${UI.kpi({ label: 'Продажи сегодня', icon: 'cart', value: '763 000', count: 763000, unit: 'сум', foot: '1 продажа', cls: 'k-accent' })}
-        ${UI.kpi({ label: 'Продажи · 7 дней', icon: 'trendUp', value: '33 457 600', count: 33457600, unit: 'сум', foot: UI.delta(33457600, 28000000), spark: [3, 6, 5, 9, 4, 12, 8], sparkColor: '#e0365e' })}
-        ${UI.kpi({ label: 'Дебиторка', icon: 'scale', value: '20 027 800', count: 20027800, unit: 'сум', foot: 'мы должны: 83,6 млн', href: '#' })}
-        ${UI.kpi({ label: 'Низкий остаток', icon: 'alert', value: '3', count: 3, foot: 'позиции ниже минимума' })}</div>
+      ${sec('Карточки и показатели', 'KPI со счётчиком и мини-графиком', html`<div class="grid g-4 keep-2">
+        ${UI.kpi({ label: 'Продажи сегодня', icon: 'cart', value: '5 800 000', count: 5800000, unit: 'сум', foot: '1 продажа', cls: 'k-accent' })}
+        ${UI.kpi({ label: 'Продажи · 7 дней', icon: 'trendUp', value: '9 232 000', count: 9232000, unit: 'сум', foot: UI.delta(9232000, 7000000), spark: [3, 6, 5, 9, 4, 12, 8], sparkColor: '#e0365e' })}
+        ${UI.kpi({ label: 'Дебиторка', icon: 'scale', value: '5 800 000', count: 5800000, unit: 'сум', foot: 'мы должны: 0', href: '#' })}
+        ${UI.kpi({ label: 'Низкий остаток', icon: 'alert', value: '1', count: 1, foot: 'позиция ниже минимума' })}</div>
         <div class="grid g-3 mt-16"><div class="note-box">${I('info')}<div>Информационное сообщение</div></div><div class="note-box warn">${I('alert')}<div>Предупреждение</div></div><div class="note-box bad">${I('x')}<div>Ошибка или отмена</div></div></div>`)}
 
-      ${sec('Таблица', 'на телефоне превращается в карточки с подписями', html`<div class="card"><div class="card-b"><div class="table-wrap"><table class="table"><thead><tr><th>Продажа</th><th>Клиент</th><th class="r">Сумма</th><th>Оплата</th><th>Статус</th></tr></thead><tbody>
-        ${SM.db.sales.map((s) => html`<tr class="click"><td><span class="cell-title">${s.no}</span><span class="cell-sub">${F.date(s.date)}</span></td><td>${SM.client(s.clientId).name}</td><td class="r nowrap fw-8">${F.cur(SM.saleCalc(s).total, s.cur)}</td><td>${s.state === 'draft' ? html`<span class="muted">—</span>` : UI.badge(SM.payStatus(s))}</td><td>${UI.badge(SM.SALE_STATUS[SM.saleStatus(s)])}</td></tr>`)}</tbody></table></div></div></div>`)}
+      ${sec('Таблица', 'на телефоне превращается в карточки с подписями; справа — изменить и удалить', html`<div class="card"><div class="card-b"><div class="table-wrap"><table class="table stackable"><thead><tr><th>Продажа</th><th>Клиент</th><th class="r">Сумма</th><th>Оплата</th><th>Статус</th><th></th></tr></thead><tbody>
+        ${SM.db.sales.map((s) => html`<tr class="click"><td data-l="Продажа"><span class="cell-title">${s.no}</span><span class="cell-sub">${F.date(s.date)}</span></td><td data-l="Клиент">${SM.client(s.clientId).name}</td><td class="r nowrap fw-8" data-l="Сумма">${F.cur(SM.saleCalc(s).total, s.cur)}</td><td data-l="Оплата">${s.state === 'draft' ? html`<span class="muted">—</span>` : UI.badge(SM.payStatus(s))}</td><td data-l="Статус">${UI.badge(SM.SALE_STATUS[SM.saleStatus(s)])}</td><td class="td-act">${UI.actBtns(s.id, {})}</td></tr>`)}</tbody></table></div></div></div>`)}
 
-      ${sec('Сайдбар и конвейер', 'группы разделов по ТЗ, счётчики, активный пункт со свечением', html`<div class="row" style="align-items:flex-start;gap:20px">
-        <div class="sg-mini-side"><div class="sb-in"><a class="sb-brand" href="#">${UI.logoMark()}<span><b>SM <em>AVTO BASE</em></b><small>Учётная система</small></span></a>
-          <nav class="sb-nav"><div class="sb-group"><span>Продажи</span><a class="sb-link active" href="#">${I('cart')}<span>Продажи</span><span class="sb-count">3</span></a><a class="sb-link" href="#">${I('users')}<span>Клиенты</span></a><a class="sb-link" href="#">${I('truck')}<span>Доставка</span><span class="sb-count bad">1</span></a></div>
-          <div class="sb-group"><span>Склад</span><a class="sb-link" href="#">${I('tire')}<span>Товары</span></a><a class="sb-link" href="#">${I('layers')}<span>Остатки</span></a></div></nav>
-          <div class="sb-user">${UI.avatar('Тимур Асадов', 'u-admin')}<div class="who"><b>Тимур Асадов</b><small>Администратор</small></div></div></div></div>
-        <div class="grow stack"><div class="card"><div class="card-b"><div class="steps">${['Черновик', 'Оплата', 'Оплачено', 'Собрано', 'Отгружено', 'Завершено'].map((t, i) => html`<div class="st ${i < 2 ? 'done' : i === 2 ? 'cur' : ''}"><i></i>${t}</div>`)}</div></div></div>
-          <div class="card"><div class="card-b"><ul class="timeline">${sale.history.slice().reverse().map((h, i) => html`<li class="${i === 0 ? 'on' : ''}"><b>${h.text}</b><small>${F.dt(h.at)} · ${SM.user_(h.uid).name}</small></li>`)}</ul></div></div></div></div>`)}
+      ${sec('Сайдбар', 'свёрнут в «рельс» с плитками, при наведении раскрывается поверх страницы, не сдвигая контент', html`<div class="row" style="align-items:flex-start;gap:20px">
+        ${side(true)}${side(false)}
+        <div class="grow stack" style="min-width:260px"><div class="card"><div class="card-b"><div class="steps">${['Черновик', 'Оплата', 'Оплачено', 'Собрано', 'Отгружено', 'Завершено'].map((t, i) => html`<div class="st ${i < 2 ? 'done' : i === 2 ? 'cur' : ''}"><i></i>${t}</div>`)}</div></div></div>
+          <div class="card"><div class="card-b"><ul class="timeline">${(sale ? sale.history : []).slice().reverse().map((h, i) => html`<li class="${i === 0 ? 'on' : ''}"><b>${h.text}</b><small>${F.dt(h.at)} · ${SM.user_(h.uid).name}</small></li>`)}</ul></div></div></div></div>`)}
 
       ${sec('Графики', 'SVG по ширине блока, столбцы «вырастают», линии «рисуются»', html`<div class="grid g-21">
         <div class="card"><div class="card-b">${UI.chart({ type: 'bar', height: 220, labels: days(14).map((d) => F.dm(d)), series: [{ name: 'Продажи', color: '#e0365e', values: [3, 5, 2, 8, 6, 9, 4, 7, 12, 5, 8, 6, 10, 9].map((x) => x * 1e6) }], tipFmt: (v) => F.cur(v) })}</div></div>
         <div class="card"><div class="card-b"><div class="row" style="justify-content:center">${UI.donut([{ name: 'Перечисление', value: 13, color: 'var(--s1)' }, { name: 'Наличные', value: 4, color: 'var(--s2)' }, { name: 'Карта', value: 3, color: 'var(--s3)' }], { value: '19,5 млн', label: '7 дней' })}</div>
           ${UI.hbars([{ label: 'Камола Иргашева', value: 26e6, extra: '· 2 продажи' }, { label: 'Дониёр Хакимов', value: 5.7e6, extra: '· 1 продажа' }])}</div></div></div>`)}
 
-      ${sec('Окна и уведомления', 'модальное окно (на телефоне — лист снизу), боковая карточка, подтверждение, тосты', html`<div class="row"><button class="btn btn-secondary" id="dModal">Модальное окно</button><button class="btn btn-secondary" id="dDrawer">Боковая карточка</button><button class="btn btn-secondary" id="dConfirm">Подтверждение</button><button class="btn btn-secondary" id="dToast">Тосты</button></div>`)}
+      ${sec('Окна и уведомления', 'модальное окно (на телефоне — лист снизу), боковая карточка, подтверждение удаления, тосты справа снизу', html`<div class="row"><button class="btn btn-secondary" id="dModal">Модальное окно</button><button class="btn btn-secondary" id="dDrawer">Боковая карточка</button><button class="btn btn-secondary" id="dConfirm">Подтверждение удаления</button><button class="btn btn-secondary" id="dToast">Все виды тостов</button></div>`)}
       ${sec('Пустые состояния', '', html`<div class="grid g-3"><div class="card">${UI.empty('Продаж не найдено', 'Измените фильтры', 'cart')}</div><div class="card">${UI.empty('Всё подтверждено', '', 'check')}</div><div class="card">${UI.empty('Нет данных', 'за выбранный период', 'chart')}</div></div>`)}
     `);
     UI.enhance(document); UI.drawCharts(document); UI.countUp(document);
-    document.getElementById('dModal').onclick = function () { UI.modal({ title: 'Новый расход', sub: 'Пример формы в окне', body: html`<div class="form-grid"><div class="field"><label>Сумма</label><input class="input" autofocus></div><div class="field"><label>Категория</label><select class="select">${UI.options(SM.db.expCats.map((c) => [c.id, c.name]), 'fuel')}</select></div></div>`, foot: html`<button class="btn btn-ghost" data-close>Отмена</button><button class="btn btn-primary" data-close>Сохранить</button>` }); };
-    document.getElementById('dDrawer').onclick = function () { UI.drawer({ title: 'Продажа ' + sale.no, sub: SM.client(sale.clientId).name, head: html`<span class="note-ic accent">${I('cart')}</span>`, body: html`<dl class="dl"><dt>Клиент</dt><dd>${SM.client(sale.clientId).name}</dd><dt>Сумма</dt><dd>${F.cur(SM.saleCalc(sale).total, sale.cur)}</dd><dt>Статус</dt><dd>${UI.badge(SM.SALE_STATUS[SM.saleStatus(sale)])}</dd></dl>`, foot: html`<button class="btn btn-primary" data-close>Принять оплату</button>` }); };
-    document.getElementById('dConfirm').onclick = function () { UI.confirm('Отменить продажу?', 'Товар вернётся на точку корректирующей записью.', { ok: 'Отменить', danger: true }); };
-    document.getElementById('dToast').onclick = function () { UI.toast('Продажа проведена', 'СП-0006 · товар списан с точки'); setTimeout(function () { UI.toast('Оплата на проверке', 'Ушла бухгалтеру', 'warn'); }, 400); };
+    var themeBtn = document.getElementById('dTheme');
+    var setIcon = function () { themeBtn.innerHTML = String(html`${I(dark() ? 'sun' : 'moon')}${dark() ? 'Светлая тема' : 'Тёмная тема'}`); };
+    setIcon();
+    themeBtn.onclick = function () {
+      var flip = function () { document.documentElement.setAttribute('data-theme', dark() ? 'light' : 'dark'); setIcon(); };
+      if (document.startViewTransition) document.startViewTransition(flip); else flip();
+    };
+    document.querySelectorAll('.lv button').forEach(function (b) { b.onclick = function () { b.parentElement.querySelectorAll('button').forEach(function (x) { x.classList.toggle('on', x === b); }); }; });
+    document.querySelectorAll('[data-edit]').forEach(function (b) { b.onclick = function (e) { e.stopPropagation(); UI.toast('Изменение', 'Откроется форма редактирования', 'info', { icon: 'edit' }); }; });
+    document.querySelectorAll('[data-del]').forEach(function (b) { b.onclick = async function (e) { e.stopPropagation(); if (await UI.confirmDelete('Удалить запись?', 'Это пример: данные не изменятся.')) UI.toast('Удалено', 'Пример тоста удаления', 'ok', { icon: 'trash' }); }; });
+    document.getElementById('dModal').onclick = function () { UI.modal({ title: 'Новый расход', sub: 'Категория: «Расходы компании»', body: html`<div class="form-grid"><div class="field full"><label>На что расход</label><input class="input" placeholder="Например: топливо для Damas" autofocus></div><div class="field"><label>Сумма</label><div class="input-suffix"><input class="input" ${UI.moneyAttrs(10000000000)}><em>сум</em></div></div></div>`, foot: html`<button class="btn btn-ghost" data-close>Отмена</button><button class="btn btn-primary" data-close>Сохранить</button>` }); };
+    document.getElementById('dDrawer').onclick = function () { if (!sale) return; UI.drawer({ title: 'Продажа ' + sale.no, sub: SM.client(sale.clientId).name, head: html`<span class="note-ic accent">${I('cart')}</span>`, body: html`<dl class="dl"><dt>Клиент</dt><dd>${SM.client(sale.clientId).name}</dd><dt>Сумма</dt><dd>${F.cur(SM.saleCalc(sale).total, sale.cur)}</dd><dt>Статус</dt><dd>${UI.badge(SM.SALE_STATUS[SM.saleStatus(sale)])}</dd></dl>`, foot: html`<button class="btn btn-primary" data-close>Принять оплату</button>` }); };
+    document.getElementById('dConfirm').onclick = function () { UI.confirmDelete('Удалить продажу?', 'Товар вернётся на склад. Запись останется в истории операций.'); };
+    document.getElementById('dToast').onclick = function () {
+      UI.toast('Продажа оформлена', 'СП-0003 · товар списан с точки', 'ok', { icon: 'cart' });
+      setTimeout(function () { UI.toast('Оплата на проверке', 'Ушла бухгалтеру', 'warn', { icon: 'clock' }); }, 300);
+      setTimeout(function () { UI.toast('Не удалось сохранить', 'Проверьте форму', 'bad'); }, 600);
+      setTimeout(function () { var t = UI.toast('Готовим файл Excel…', 'Подождите пару секунд', 'load'); setTimeout(function () { t.set('Файл Excel скачан', 'Продажи.xlsx', 'ok'); }, 1500); }, 900);
+    };
   })();
   </script>
 </body>
