@@ -296,9 +296,17 @@
     };
     const tot = () => { const c = SM.receiptCalc({ items: st.items, vat: f.vat.checked }); m.querySelector('#rcTot').innerHTML = String(html`<div class="row"><span>Позиций</span><b>${st.items.length}</b></div>${f.vat.checked ? html`<div class="row"><span>НДС ${SM.vatCfg().rate}%</span><b>${F.cur(c.vat, cur())}</b></div>` : ''}<div class="row"><span>Доп. расходы</span><b>${F.cur(c.extra, cur())}</b></div><div class="row grand"><span>Сумма поставщику</span><b>${F.cur(c.total, cur())}</b></div>`); };
     SM.productPicker(m.querySelector('#rcPick'), { point: () => f.pointId.value, onPick: (p) => { if (!st.items.some((l) => l.productId === p.id)) { const k = (v, c) => Math.round(SM.conv(v, c || 'UZS', cur(), +f.rate.value) * 100) / 100; st.items.push({ productId: p.id, qty: 1, buy: k(p.buy, p.buyCur), extra: k(p.extra || 0, p.buyCur), price: k(p.price, p.cur) }); } draw(); } });
-    m.querySelector('#rcLines').addEventListener('input', (e) => { const k = e.target.dataset.k; if (!k) return; const tr = e.target.closest('tr'), l = st.items[+tr.dataset.i]; l[k] = +e.target.value || 0; tr.querySelector('[data-cost]').textContent = F.cur(l.buy + l.extra, cur()); tot(); });
+    m.querySelector('#rcLines').addEventListener('input', (e) => { const k = e.target.dataset.k; if (!k) return; const tr = e.target.closest('tr'), l = st.items[+tr.dataset.i]; l[k] = +e.target.value || 0; if (k !== 'qty') delete l.src; tr.querySelector('[data-cost]').textContent = F.cur(l.buy + l.extra, cur()); tot(); });
     m.querySelector('#rcLines').addEventListener('click', (e) => { const d = e.target.closest('[data-del]'); if (d) { st.items.splice(+d.dataset.del, 1); draw(); } });
-    f.cur.addEventListener('change', draw); f.vat.addEventListener('change', tot);
+    // смена валюты пересчитывает уже введённые цены по курсу документа — иначе «1 450 000 сум» станут «$1 450 000»
+    // считаем всегда от исходных цен строки (src), чтобы туда-обратно не копилась погрешность округления
+    let prevCur = cur();
+    f.cur.addEventListener('change', () => {
+      const rt = +f.rate.value || SM.rate('bank');
+      st.items.forEach((l) => { const src = l.src || (l.src = { cur: prevCur, buy: l.buy, extra: l.extra, price: l.price }); ['buy', 'extra', 'price'].forEach((k) => (l[k] = src.cur === cur() ? src[k] : Math.round(SM.conv(src[k], src.cur, cur(), rt) * 100) / 100)); });
+      prevCur = cur(); draw();
+    });
+    f.vat.addEventListener('change', tot);
     draw();
     const save = (post) => {
       const d = UI.formData(f);
@@ -306,7 +314,7 @@
       if (!st.items.length) return UI.toast('Добавьте товары', '', 'warn');
       if (st.items.some((l) => !(l.qty > 0))) return UI.toast('Проверьте количество', '', 'warn');
       const files = Array.from(f.files.files || []).map((x) => x.name);
-      const rc = SM.ops.saveReceipt({ date: d.date, supplierId: d.supplierId, pointId: d.pointId, cur: d.cur, rate: +d.rate, vat: d.vat, items: st.items, comment: d.comment, files }, post);
+      const rc = SM.ops.saveReceipt({ date: d.date, supplierId: d.supplierId, pointId: d.pointId, cur: d.cur, rate: +d.rate, vat: d.vat, items: st.items.map(({ src, ...l }) => l), comment: d.comment, files }, post);
       UI.closeTop(); UI.toast(post ? 'Поступление проведено' : 'Черновик сохранён', rc.no + (post ? ' · остатки увеличены' : '')); SM.go('#/receipts/' + rc.id);
     };
     m.querySelector('[data-x=draft]').onclick = () => save(false);
@@ -332,7 +340,11 @@
     SM.trackDrawer(SM.openReceipt, [id], dr, '#/receipts');
     const on = (s, fn) => { const b = dr.querySelector(s); if (b) b.onclick = fn; };
     on('[data-x=post]', () => { SM.ops.saveReceipt(rc, true); UI.toast('Проведено', rc.no); SM.refresh(); });
-    on('[data-x=cancel]', async () => { const why = await UI.prompt('Отменить поступление ' + rc.no + '?', 'Остатки уменьшатся корректирующей записью', { ok: 'Отменить', danger: true }); if (!why) return; SM.ops.cancelReceipt(rc, why); UI.toast('Поступление отменено', rc.no, 'warn'); SM.refresh(); });
+    on('[data-x=cancel]', async () => {
+      // отмена проведённого поступления не должна увести остаток в минус, если товар уже продан или перемещён
+      const short = rc.status === 'posted' && rc.items.find((l) => SM.qty(l.productId, rc.pointId) < l.qty);
+      if (short) return UI.toast('Отменить нельзя', SM.product(short.productId).name + ': на складе ' + SM.qty(short.productId, rc.pointId) + ' из ' + short.qty + ' — товар уже продан или перемещён', 'bad');
+      const why = await UI.prompt('Отменить поступление ' + rc.no + '?', 'Остатки уменьшатся корректирующей записью', { ok: 'Отменить', danger: true }); if (!why) return; SM.ops.cancelReceipt(rc, why); UI.toast('Поступление отменено', rc.no, 'warn'); SM.refresh(); });
   };
   function receiptsPage(r) {
     const st = r.q.st || '';
