@@ -299,7 +299,7 @@
         ${s.items.map((l) => { const p = SM.product(l.productId); return html`<tr><td><span class="cell-title">${p.name}</span><span class="cell-sub">${p.code}</span></td><td class="r">${l.qty} ${p.unit}</td><td class="r nowrap">${fmtC(l.price)}</td><td class="r">${l.disc ? l.disc + '%' : '—'}</td><td class="r nowrap fw-8">${fmtC(SM.lineSum(l))}</td></tr>`; })}</tbody></table></div>
       <div class="totals mt-12" style="max-width:360px;margin-left:auto">
         ${c.lineDisc + c.docDisc > 0 ? html`<div class="row"><span>Скидки${s.docDisc ? ' (на документ ' + s.docDisc + '%)' : ''}</span><b class="bad-t">−${fmtC(c.lineDisc + c.docDisc)}</b></div>` : ''}
-        ${s.vat && SM.vatCfg().enabled ? html`<div class="row"><span>Без НДС</span><b>${fmtC(c.net)}</b></div><div class="row"><span>НДС ${SM.vatCfg().rate}%</span><b>${fmtC(c.vat)}</b></div>` : ''}
+        ${s.vat && SM.vatCfg(s).enabled ? html`<div class="row"><span>Без НДС</span><b>${fmtC(c.net)}</b></div><div class="row"><span>НДС ${SM.vatCfg(s).rate}%</span><b>${fmtC(c.vat)}</b></div>` : ''}
         <div class="row grand"><span>Итого</span><b>${fmtC(c.total)}</b></div>
         <div class="row"><span>Оплачено (подтверждено)</span><b class="ok-t">${fmtC(c.paid)}</b></div>
         ${c.pending > 0 ? html`<div class="row"><span>На проверке у бухгалтера</span><b class="warn-t">${fmtC(c.pending)}</b></div>` : ''}

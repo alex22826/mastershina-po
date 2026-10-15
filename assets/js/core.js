@@ -111,6 +111,9 @@
     if (!db || db.version !== SM.DB_VERSION) { db = SM.seed(); SM.db = db; persist(); }
     const today = D.todayISO();
     if (db.demo && db.baseDay !== today) { shiftDates(db, D.diffDays(today, db.baseDay)); db.baseDay = today; SM.db = db; persist(); }
+    // документы, оформленные до фиксации НДС, получают текущие настройки — дальше они не меняются
+    const noVat = db.sales.filter((s) => s.state !== 'draft' && !s.vatCfg).concat(db.receipts.filter((r) => r.status !== 'draft' && !r.vatCfg));
+    if (noVat.length) { noVat.forEach((x) => (x.vatCfg = Object.assign({}, db.settings.vat))); SM.db = db; persist(); }
     SM.db = db; memo = {};
     return db;
   };
@@ -283,10 +286,13 @@
     return amount;
   };
   SM.toUZS = (amount, cur, rate) => SM.conv(amount, cur, 'UZS', rate);
-  SM.vatCfg = () => SM.db.settings.vat;
+  /* настройки НДС: у проведённого документа — свои, зафиксированные при оформлении
+     (как курс, ТЗ 10); без документа — текущие из «Валюты и НДС» */
+  SM.vatCfg = (doc) => (doc && doc.vatCfg) || SM.db.settings.vat;
+  SM.vatSnap = () => Object.assign({}, SM.db.settings.vat);
   /* НДС: «в т.ч.» (цена уже с НДС) или «сверху». Ставка по умолчанию 12% (ТЗ 10) */
-  SM.vatSplit = function (amount, on = true) {
-    const v = SM.vatCfg();
+  SM.vatSplit = function (amount, on = true, cfg) {
+    const v = cfg || SM.vatCfg();
     if (!on || !v.enabled) return { net: amount, vat: 0, total: amount };
     if (v.mode === 'top') { const vat = amount * v.rate / 100; return { net: amount, vat, total: amount + vat }; }
     const vat = amount * v.rate / (100 + v.rate);
@@ -325,7 +331,7 @@
     const lineDisc = s.items.reduce((a, l) => a + l.qty * l.price * (l.disc || 0) / 100, 0);
     const docDisc = sub * (s.docDisc || 0) / 100;
     const base = sub - docDisc;
-    const v = SM.vatSplit(base, s.vat);
+    const v = SM.vatSplit(base, s.vat, SM.vatCfg(s));
     const pays = SM.db.payments.filter((p) => p.saleId === s.id && p.dir === 'in');
     const inCur = (p) => SM.conv(p.amount, p.cur, s.cur, p.rate);
     const paid = pays.filter((p) => p.status === 'confirmed').reduce((a, p) => a + inCur(p), 0);
@@ -411,7 +417,7 @@
   SM.receiptCalc = function (r) {
     const sum = r.items.reduce((a, l) => a + l.qty * l.buy, 0);
     const extra = r.items.reduce((a, l) => a + l.qty * (l.extra || 0), 0);
-    const v = SM.vatSplit(sum, r.vat);
+    const v = SM.vatSplit(sum, r.vat, SM.vatCfg(r));
     return { sum, extra, net: v.net, vat: v.vat, total: v.total, cost: sum + extra };
   };
   SM.receiptTotalUZS = (r) => SM.toUZS(SM.receiptCalc(r).total, r.cur, r.rate);
@@ -501,7 +507,7 @@
     const s = isNew ? { id: SM.uid('s'), no: SM.nextNo('СП'), createdAt: new Date().toISOString(), state: 'draft', history: [] } : SM.db.sales.find((x) => x.id === data.id);
     const wasDraft = s.state === 'draft';
     Object.assign(s, { date: data.date, clientId: data.clientId, sellerId: data.sellerId || me().id, pointId: data.pointId, items: data.items, docDisc: +data.docDisc || 0,
-      cur: data.cur, rateType: data.rateType, rate: +data.rate, vat: !!data.vat, receive: data.receive, credit: !!data.credit, due: data.credit ? data.due : null, comment: data.comment || '', source: data.source || s.source || 'office' });
+      cur: data.cur, rateType: data.rateType, rate: +data.rate, vat: !!data.vat, vatCfg: SM.vatSnap(), receive: data.receive, credit: !!data.credit, due: data.credit ? data.due : null, comment: data.comment || '', source: data.source || s.source || 'office' });
     if (isNew) SM.db.sales.push(s);
     s.history.push({ at: new Date().toISOString(), uid: me().id, text: isNew ? 'Создана' : 'Изменена' });
     if (post && wasDraft) {
@@ -576,7 +582,7 @@
   ops.saveReceipt = function (data, post) {
     const isNew = !data.id;
     const r = isNew ? { id: SM.uid('r'), no: SM.nextNo('ПТ'), status: 'draft', by: me().id, createdAt: new Date().toISOString() } : SM.db.receipts.find((x) => x.id === data.id);
-    Object.assign(r, { date: data.date, supplierId: data.supplierId, pointId: data.pointId, cur: data.cur, rate: +data.rate, vat: !!data.vat, items: data.items, comment: data.comment || '', files: data.files || r.files || [] });
+    Object.assign(r, { date: data.date, supplierId: data.supplierId, pointId: data.pointId, cur: data.cur, rate: +data.rate, vat: !!data.vat, vatCfg: r.status === 'draft' ? SM.vatSnap() : r.vatCfg, items: data.items, comment: data.comment || '', files: data.files || r.files || [] });
     if (isNew) SM.db.receipts.push(r);
     if (post && r.status === 'draft') {
       r.status = 'posted'; r.postedAt = new Date().toISOString();

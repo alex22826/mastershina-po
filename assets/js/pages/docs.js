@@ -30,10 +30,10 @@
   /* ---------- Шаблоны документов (реквизиты подставляются автоматически) ---------- */
   const req = (o) => `${E(o.name)}${o.inn ? ', ИНН ' + E(o.inn) : ''}${o.address ? ', ' + E(o.address) : ''}${o.account ? '<br>р/с ' + E(o.account) + (o.bank ? ' в ' + E(o.bank) : '') + (o.mfo ? ', МФО ' + E(o.mfo) : '') : ''}${o.phone ? '<br>тел. ' + E(o.phone) : ''}`;
   function itemsTable(s, { prices = true, vatCols = false } = {}) {
-    const c = SM.saleCalc(s), v = SM.vatCfg();
+    const c = SM.saleCalc(s), v = SM.vatCfg(s);
     const rows = s.items.map((l, i) => {
       // в счёт-фактуре скидка на документ распределяется по строкам, в остальных — отдельной строкой итогов
-      const p = SM.product(l.productId), sum = SM.lineSum(l), sp = SM.vatSplit(SM.lineSum(l) * (1 - (s.docDisc || 0) / 100), s.vat);
+      const p = SM.product(l.productId), sum = SM.lineSum(l), sp = SM.vatSplit(SM.lineSum(l) * (1 - (s.docDisc || 0) / 100), s.vat, v);
       if (!prices) return `<tr><td>${i + 1}</td><td>${E(p.name)}<br><span class="muted">${E(p.code)}</span></td><td>${E(p.unit)}</td><td class="doc-r">${l.qty}</td></tr>`;
       if (vatCols) return `<tr><td>${i + 1}</td><td>${E(p.name)}</td><td>${E(p.unit)}</td><td class="doc-r">${l.qty}</td><td class="doc-r">${F.num(sp.net / l.qty, s.cur === 'USD' ? 2 : 0)}</td><td class="doc-r">${F.num(sp.net, s.cur === 'USD' ? 2 : 0)}</td><td class="doc-r">${s.vat && v.enabled ? v.rate + '%' : 'без НДС'}</td><td class="doc-r">${F.num(sp.vat, s.cur === 'USD' ? 2 : 0)}</td><td class="doc-r">${F.num(sp.total, s.cur === 'USD' ? 2 : 0)}</td></tr>`;
       return `<tr><td>${i + 1}</td><td>${E(p.name)}</td><td>${E(p.unit)}</td><td class="doc-r">${l.qty}</td><td class="doc-r">${F.num(l.price, s.cur === 'USD' ? 2 : 0)}</td><td class="doc-r">${l.disc ? l.disc + '%' : ''}</td><td class="doc-r">${F.num(sum, s.cur === 'USD' ? 2 : 0)}</td></tr>`;
@@ -42,7 +42,7 @@
     if (!prices) return `<table><thead><tr><th>№</th><th>Наименование</th><th>Ед.</th><th>Кол-во</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="3"><b>Всего мест</b></td><td class="doc-r"><b>${s.items.reduce((a, l) => a + l.qty, 0)}</b></td></tr></tfoot></table>`;
     if (vatCols) return `<table><thead><tr><th>№</th><th>Наименование</th><th>Ед.</th><th>Кол-во</th><th>Цена без НДС</th><th>Стоимость без НДС</th><th>Ставка</th><th>Сумма НДС</th><th>С НДС, ${curName}</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="5"><b>Итого</b></td><td class="doc-r"><b>${F.num(c.net, s.cur === 'USD' ? 2 : 0)}</b></td><td></td><td class="doc-r"><b>${F.num(c.vat, s.cur === 'USD' ? 2 : 0)}</b></td><td class="doc-r"><b>${F.num(c.total, s.cur === 'USD' ? 2 : 0)}</b></td></tr></tfoot></table>`;
     return `<table><thead><tr><th>№</th><th>Наименование</th><th>Ед.</th><th>Кол-во</th><th>Цена, ${curName}</th><th>Скидка</th><th>Сумма, ${curName}</th></tr></thead><tbody>${rows}</tbody></table>
-      <table style="width:auto;margin-left:auto"><tbody>${s.docDisc ? `<tr><td>Скидка на документ ${s.docDisc}%</td><td class="doc-r">−${F.cur(c.docDisc, s.cur)}</td></tr>` : ''}${s.vat && SM.vatCfg().enabled ? `<tr><td>Без НДС</td><td class="doc-r">${F.cur(c.net, s.cur)}</td></tr><tr><td>НДС ${SM.vatCfg().rate}%</td><td class="doc-r">${F.cur(c.vat, s.cur)}</td></tr>` : '<tr><td colspan="2">Без НДС</td></tr>'}<tr><td><b>Итого к оплате</b></td><td class="doc-r"><b>${F.cur(c.total, s.cur)}</b></td></tr></tbody></table>`;
+      <table style="width:auto;margin-left:auto"><tbody>${s.docDisc ? `<tr><td>Скидка на документ ${s.docDisc}%</td><td class="doc-r">−${F.cur(c.docDisc, s.cur)}</td></tr>` : ''}${s.vat && v.enabled ? `<tr><td>Без НДС</td><td class="doc-r">${F.cur(c.net, s.cur)}</td></tr><tr><td>НДС ${v.rate}%</td><td class="doc-r">${F.cur(c.vat, s.cur)}</td></tr>` : '<tr><td colspan="2">Без НДС</td></tr>'}<tr><td><b>Итого к оплате</b></td><td class="doc-r"><b>${F.cur(c.total, s.cur)}</b></td></tr></tbody></table>`;
   }
   SM.docHTML = function (doc) {
     const co = SM.db.settings.company;
@@ -51,7 +51,7 @@
     const t = SM.DOC_TYPES[doc.type].name;
     const head = (title) => `<div class="doc-head"><div><b>${E(co.name)}</b><br>${E(co.address)}<br>тел. ${E(co.phone)}</div><div class="doc-r">№ ${E(doc.no)}<br>от ${F.date(doc.date)}${s ? '<br>к продаже ' + E(s.no) : ''}</div></div><h1>${title} № ${E(doc.no)} от ${F.date(doc.date)}</h1>`;
     const note = doc.note ? `<p><b>Примечание:</b> ${E(doc.note)}</p>` : '';
-    const words = s ? `<p>Всего к оплате: <b>${E(SM.inWords(SM.saleCalc(s).total, s.cur))}</b>${s.vat && SM.vatCfg().enabled ? ', в т.ч. НДС ' + F.cur(SM.saleCalc(s).vat, s.cur) : ''}.</p>` : '';
+    const words = s ? `<p>Всего к оплате: <b>${E(SM.inWords(SM.saleCalc(s).total, s.cur))}</b>${s.vat && SM.vatCfg(s).enabled ? ', в т.ч. НДС ' + F.cur(SM.saleCalc(s).vat, s.cur) : ''}.</p>` : '';
     switch (doc.type) {
       case 'invoice': return head('Счёт на оплату') + `<p><b>Поставщик:</b> ${req(co)}</p><p><b>Покупатель:</b> ${req(cl)}</p>${itemsTable(s)}${words}<p class="muted">Счёт действителен 3 банковских дня. Курс $ зафиксирован: ${F.num(s.rate)} сум.</p>${note}<div class="doc-sign"><div>Директор ${E(co.director)}</div><div>Гл. бухгалтер ${E(co.accountant)}</div></div>`;
       case 'receipt': { const pt = SM.point(s.pointId); return `<div class="doc-head"><div><b>${E(co.name)}</b><br>${E(pt.name)}, ${E(pt.address)}</div><div class="doc-r">${F.dt(s.postedAt || doc.at)}</div></div><h1>Товарный чек № ${E(doc.no)}</h1><p>Покупатель: ${E(cl.name)}</p>${itemsTable(s)}${words}${note}<div class="doc-sign"><div>Продавец ${E(SM.user_(s.sellerId).name)}</div><div>Покупатель</div></div>`; }
