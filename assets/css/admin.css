@@ -80,13 +80,14 @@
 /* ---------- База ---------- */
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html { -webkit-text-size-adjust: 100%; background: var(--bg); }
-body {
-  margin: 0; min-height: 100vh; font: 450 14px/1.5 var(--font); color: var(--text);
+body { margin: 0; min-height: 100vh; font: 450 14px/1.5 var(--font); color: var(--text); background: transparent; }
+/* свечение фона — отдельным неподвижным слоем: браузер держит его на видеокарте и не перерисовывает
+   весь экран на каждый кадр (с background-attachment: fixed смена темы и прокрутка дёргались) */
+body::before {
+  content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none; transform: translateZ(0);
   background:
     radial-gradient(900px 520px at 100% -8%, var(--bg-glow), transparent 62%),
-    radial-gradient(760px 520px at -10% 108%, var(--bg-glow-2), transparent 60%),
-    var(--bg);
-  background-attachment: fixed;
+    radial-gradient(760px 520px at -10% 108%, var(--bg-glow-2), transparent 60%);
 }
 h1, h2, h3, h4 { margin: 0; font-family: var(--display); font-weight: 700; letter-spacing: -.005em; line-height: 1.2; }
 h1 { font-size: 28px; } h2 { font-size: 19px; } h3 { font-size: 15.5px; font-weight: 700; } h4 { font-size: 14px; }
@@ -109,6 +110,9 @@ code, .mono { font-family: var(--mono); font-size: .9em; }
 .theme-fade, .theme-fade *, .theme-fade *::before, .theme-fade *::after { transition: background-color .6s ease, border-color .6s ease, color .45s ease, fill .45s ease, box-shadow .6s ease !important; }
 /* «волна» новой темы: старое состояние не анимируем — новое раскрывается кругом от кнопки */
 ::view-transition-old(root), ::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
+/* пока идёт «волна», переходы цвета у кнопок, плиток и строк выключены: иначе сотни элементов
+   анимируют цвет внутри снимка страницы и круг раскрывается рывками */
+.theme-switching *, .theme-switching *::before, .theme-switching *::after { transition: none !important; }
 /* плавная смена языка: текст гаснет, меняется и проявляется (как на странице входа) */
 .lang-out #view, .lang-out .sb-nav, .lang-out .topbar .crumbs, .lang-out .bnav, .lang-out .drawer, .lang-out .modal { transition: opacity .22s ease, transform .22s ease, filter .22s ease; opacity: 0; transform: translateY(5px); filter: blur(2px); }
 .lang-in #view, .lang-in .sb-nav, .lang-in .topbar .crumbs, .lang-in .bnav { animation: langIn .3s var(--ease); }
@@ -740,7 +744,7 @@ input[type=date]::-webkit-calendar-picker-indicator { cursor: pointer; opacity: 
 /* --- Телефон --- */
 @media (max-width: 720px) {
   :root { --topbar-h: 58px; }
-  body { font-size: 14.5px; background-attachment: scroll; }
+  body { font-size: 14.5px; }
   .app { padding-left: 0; }
   .sidebar { width: min(300px, 86vw); transform: translateX(-104%); transition: transform .32s var(--ease); }
   .sidebar .sb-fade { opacity: 1; visibility: visible; transition: none; }

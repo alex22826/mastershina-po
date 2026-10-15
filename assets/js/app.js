@@ -10,7 +10,7 @@
   SM.pages = {};
   SM.page = (key, def) => (SM.pages[key] = def);
   // версия сборки: когда на сайте выкладывают новую, version.json отличается — показываем плашку «обновите страницу»
-  SM.APP_VERSION = '2026-10-15.4';
+  SM.APP_VERSION = '2026-10-15.5';
 
   /* ---------- Тема: светлая 8:00–18:00, тёмная 18:00–8:00; вручную — до следующего переключения ---------- */
   const OVR = 'sm.themeOverride';
@@ -19,9 +19,11 @@
   SM.nextThemeSwitch = (d = new Date()) => { const t = new Date(d), h = d.getHours(); if (h < 8) t.setHours(8, 0, 0, 0); else if (h < 18) t.setHours(18, 0, 0, 0); else { t.setDate(t.getDate() + 1); t.setHours(8, 0, 0, 0); } return t.getTime(); };
   SM.themeWanted = () => { try { const o = JSON.parse(localStorage.getItem(OVR) || 'null'); if (o && o.until > Date.now()) return o.theme; } catch (e) { /* без хранилища — по времени */ } return SM.themeAuto(); };
   SM.themeTip = () => (SM.theme() === 'dark' ? 'Тёмная тема' : 'Светлая тема') + (SM.theme() === SM.themeAuto() ? ' · по времени' : ' · вручную до ' + (SM.themeAuto() === 'light' ? '18:00' : '8:00')) + '\nСама: светлая с 8:00, тёмная с 18:00';
+  // возвращает промис, который завершается, когда «волна» докатилась
+  let switching = 0;
   SM.applyTheme = function (t, origin) {
     const root = document.documentElement;
-    if (SM.theme() === t) return;
+    if (SM.theme() === t) return Promise.resolve();
     const flip = () => {
       root.setAttribute('data-theme', t);
       document.querySelectorAll('meta[name=theme-color]').forEach((m) => m.setAttribute('content', t === 'dark' ? '#0b0c0f' : '#f2f3f7'));
@@ -29,18 +31,24 @@
     };
     const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (document.startViewTransition && !reduce) {
-      // новая тема раскрывается «волной» от кнопки (или сверху, если сменилась по времени)
+      // новая тема раскрывается «волной» от кнопки (или сверху, если сменилась по времени);
+      // переходы цвета на это время выключены (.theme-switching), иначе круг идёт рывками
       const x = origin ? origin.x : innerWidth / 2, y = origin ? origin.y : 0;
       const R = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
+      // счётчик — на случай быстрых повторных нажатий: класс снимаем, когда закончилась последняя «волна»
+      switching++; root.classList.add('theme-switching');
       const vt = document.startViewTransition(flip);
-      vt.ready.then(() => root.animate({ clipPath: ['circle(0px at ' + x + 'px ' + y + 'px)', 'circle(' + R + 'px at ' + x + 'px ' + y + 'px)'] }, { duration: origin ? 750 : 1300, easing: 'cubic-bezier(.4, 0, .2, 1)', pseudoElement: '::view-transition-new(root)' })).catch(() => {});
-    } else { root.classList.add('theme-fade'); flip(); setTimeout(() => root.classList.remove('theme-fade'), 700); }
+      vt.ready.then(() => root.animate({ clipPath: ['circle(0px at ' + x + 'px ' + y + 'px)', 'circle(' + R + 'px at ' + x + 'px ' + y + 'px)'] }, { duration: origin ? 600 : 1100, easing: 'cubic-bezier(.25, .8, .25, 1)', pseudoElement: '::view-transition-new(root)' })).catch(() => {});
+      return vt.finished.catch(() => {}).then(() => { if (--switching <= 0) { switching = 0; root.classList.remove('theme-switching'); } });
+    }
+    root.classList.add('theme-fade'); flip(); setTimeout(() => root.classList.remove('theme-fade'), 700);
+    return Promise.resolve();
   };
   SM.toggleTheme = function (origin) {
     const t = SM.theme() === 'dark' ? 'light' : 'dark';
     try { if (t === SM.themeAuto()) localStorage.removeItem(OVR); else localStorage.setItem(OVR, JSON.stringify({ theme: t, until: SM.nextThemeSwitch() })); } catch (e) { /* без хранилища */ }
-    SM.applyTheme(t, origin);
-    UI.toast(t === 'dark' ? 'Тёмная тема' : 'Светлая тема', t === SM.themeAuto() ? 'Как положено по времени' : 'До ' + (t === 'dark' ? '8:00' : '18:00') + ', потом — снова по времени', 'info', { icon: t === 'dark' ? 'moon' : 'sun', ms: 2600 });
+    // сообщение — после «волны», чтобы его анимация не мешала кругу
+    SM.applyTheme(t, origin).then(() => UI.toast(t === 'dark' ? 'Тёмная тема' : 'Светлая тема', t === SM.themeAuto() ? 'Как положено по времени' : 'До ' + (t === 'dark' ? '8:00' : '18:00') + ', потом — снова по времени', 'info', { icon: t === 'dark' ? 'moon' : 'sun', ms: 2600 }));
   };
   SM.startThemeClock = () => setInterval(() => { const w = SM.themeWanted(); if (w !== SM.theme()) SM.applyTheme(w); }, 30000);
 
