@@ -635,19 +635,149 @@
       UI.closeTop(); UI.toast('Заявка на доставку создана', x.no + ' · ' + SM.client(d.clientId).name, 'ok', { icon: 'truck' }); SM.refresh();
     };
   }
+  /* ---------- Канбан доставки: перенос карточки в другую колонку ---------- */
+  const DLV_ORDER = ['new', 'assigned', 'handed', 'delivered'];
+  // можно ли перенести заявку в колонку: вперёд — да, назад — только «Назначена» → «Новая»
+  const dlvMoveCheck = (x, to) => {
+    if (to === x.status) return { ok: false };
+    if (to === 'cancelled') return { ok: true };
+    const fi = DLV_ORDER.indexOf(x.status), ti = DLV_ORDER.indexOf(to);
+    if (ti > fi) return { ok: true };
+    if (x.status === 'assigned' && to === 'new') return { ok: true };
+    return { ok: false, why: x.status === 'handed' ? 'Товар уже передан водителю — отгрузка отмечена' : 'Нельзя вернуть назад' };
+  };
+  // своя доставка без водителя и автомобиля: спрашиваем их в окне; null — окно закрыли
+  const dlvAssignModal = (x, to) => new Promise((res) => {
+    let done = false;
+    const final = to !== 'assigned';
+    const m = UI.modal({ title: 'Водитель для ' + x.no, sub: 'Для своей доставки нужны водитель и автомобиль' + (final ? '. Отгрузка будет отмечена, вернуть заявку назад нельзя' : ''), size: 'narrow',
+      body: html`<form class="form-grid" autocomplete="off">
+        <div class="field full"><label>Водитель <span class="req">*</span></label><select class="select" name="driverId">${UI.options(SM.db.drivers.filter((d) => d.active).map((d) => [d.id, d.name + ' · ' + d.phone]), x.driverId, 'Выберите водителя')}</select></div>
+        <div class="field full"><label>Автомобиль <span class="req">*</span></label><select class="select" name="carId">${UI.options(SM.db.cars.filter((c) => c.active).map((c) => [c.id, c.model + ' · ' + c.plate]), x.carId, 'Выберите автомобиль')}</select></div></form>`,
+      foot: html`<button class="btn btn-ghost" data-close>Отмена</button><button class="btn btn-primary" data-ok>${I('arrowRight')}${SM.DELIVERY_STATUS[to][0]}</button>`,
+      onClose: () => { if (!done) res(null); } });
+    const f = m.querySelector('form');
+    UI.enhance(m);
+    m.querySelector('[data-ok]').onclick = () => {
+      const d = UI.formData(f);
+      if (!d.driverId) return UI.invalid(f, 'driverId', 'Выберите водителя');
+      if (!d.carId) return UI.invalid(f, 'carId', 'Выберите автомобиль');
+      done = true; UI.closeTop(); res({ driverId: d.driverId, carId: d.carId });
+    };
+  });
+  // перенос: шаги проходят по порядку, как кнопками в карточке — с отгрузкой и завершением продажи
+  SM.moveDelivery = async function (x, to) {
+    const chk = dlvMoveCheck(x, to);
+    if (!chk.ok) { if (chk.why) UI.toast('Нельзя вернуть назад', chk.why, 'warn', { icon: 'truck' }); return false; }
+    if (to === 'cancelled') {
+      const why = await UI.prompt('Отменить доставку ' + x.no + '?', '', { ok: 'Отменить', danger: true });
+      if (!why) return false;
+      SM.ops.deliveryUpdate(x, { status: 'cancelled' }, 'Отменена: ' + why);
+      UI.toast('Доставка ' + x.no, SM.DELIVERY_STATUS.cancelled[0], 'warn', { icon: 'truck' });
+      return true;
+    }
+    const fi = DLV_ORDER.indexOf(x.status), ti = DLV_ORDER.indexOf(to);
+    if (ti < fi) { SM.ops.deliveryUpdate(x, { status: 'new' }, 'Возвращена в «Новая»'); UI.toast('Заявка возвращена в «Новая»', x.no, 'info', { icon: 'undo' }); return true; }
+    let patch = {};
+    if (x.kind === 'own' && (!x.driverId || !x.carId)) { patch = await dlvAssignModal(x, to); if (!patch) return false; }
+    else if (ti >= 2 && !(await UI.confirm(to === 'handed' ? 'Передать водителю ' + x.no + '?' : 'Отметить ' + x.no + ' доставленной?',
+      to === 'handed' ? 'Товар будет отмечен как отгруженный. Вернуть заявку назад будет нельзя.' : 'Оплаченная продажа завершится. Вернуть заявку назад будет нельзя.', { ok: SM.DELIVERY_STATUS[to][0] }))) return false;
+    for (let i = fi + 1; i <= ti; i++) {
+      const nx = DLV_ORDER[i], p = Object.assign(i === fi + 1 ? patch : {}, { status: nx });
+      const drv = p.driverId || x.driverId, car = p.carId || x.carId;
+      SM.ops.deliveryUpdate(x, p, nx === 'assigned' && drv ? 'Назначен водитель ' + SM.driver(drv).name + (car ? ', ' + SM.car(car).model : '') : SM.DELIVERY_STATUS[nx][0]);
+    }
+    UI.toast('Доставка ' + x.no, SM.DELIVERY_STATUS[to][0], 'ok', { icon: 'truck' });
+    return true;
+  };
+  // мышь — перетаскивание сразу; палец — после удержания 0,3 с, чтобы свайп по доске прокручивал колонки
+  let dlvNoClick = false;
+  function bindBoardDrag(el) {
+    const board = el.querySelector('.board');
+    if (!board || !SM.can('delivery', 2)) return;
+    let d = null, raf = 0;
+    const laneAt = (x, y) => { const n = document.elementFromPoint(x, y); return n && n.closest('.lane[data-lane]'); };
+    const clearLanes = () => board.querySelectorAll('.lane').forEach((l) => { l.classList.remove('drop-ok', 'drop-no'); delete l.dataset.why; });
+    const mark = (lane) => {
+      clearLanes();
+      if (!lane || lane.dataset.lane === d.from) return;
+      const chk = dlvMoveCheck(d.x, lane.dataset.lane);
+      lane.classList.add(chk.ok ? 'drop-ok' : 'drop-no');
+      if (!chk.ok) lane.dataset.why = SM.i18n ? SM.i18n.tr(chk.why) : chk.why;
+    };
+    const move = (x, y) => { d.cx = x; d.cy = y; d.ghost.style.transform = 'translate(' + (x - d.dx) + 'px, ' + (y - d.dy) + 'px) rotate(1.5deg)'; mark(laneAt(x, y)); };
+    const start = () => {
+      d.on = true;
+      const r = d.t.getBoundingClientRect();
+      d.dx = d.x0 - r.left; d.dy = d.y0 - r.top;
+      d.ghost = d.t.cloneNode(true);
+      d.ghost.classList.add('ticket-ghost'); d.ghost.style.width = r.width + 'px';
+      document.body.appendChild(d.ghost);
+      d.t.classList.add('drag-src'); board.classList.add('dragging'); document.body.classList.add('is-dragging');
+      move(d.cx, d.cy);
+      if (d.touch && navigator.vibrate) navigator.vibrate(12);
+      // у края доски она сама прокручивается — так на телефоне можно дотянуть до соседней колонки
+      const tick = () => {
+        if (!d || !d.on) return;
+        const b = board.getBoundingClientRect();
+        if (d.cx < b.left + 56) board.scrollLeft -= 12; else if (d.cx > b.right - 56) board.scrollLeft += 12;
+        raf = requestAnimationFrame(tick);
+      };
+      raf = requestAnimationFrame(tick);
+    };
+    const onMove = (e) => {
+      if (!d || e.pointerId !== d.pid) return;
+      if (!d.on) {
+        const far = Math.hypot(e.clientX - d.x0, e.clientY - d.y0);
+        d.cx = e.clientX; d.cy = e.clientY;
+        if (d.touch) { if (far > 8) finish(false); return; } // палец поехал раньше удержания — это прокрутка
+        if (far > 5) start();
+        return;
+      }
+      e.preventDefault();
+      move(e.clientX, e.clientY);
+    };
+    const noScroll = (e) => { if (d && d.on) e.preventDefault(); };
+    const finish = async (drop) => {
+      const cur = d; d = null;
+      cancelAnimationFrame(raf); clearTimeout(cur.timer);
+      removeEventListener('pointermove', onMove); removeEventListener('pointerup', onUp); removeEventListener('pointercancel', onCancel);
+      document.removeEventListener('touchmove', noScroll);
+      if (!cur.on) return;
+      cur.ghost.remove(); cur.t.classList.remove('drag-src'); board.classList.remove('dragging'); document.body.classList.remove('is-dragging');
+      clearLanes();
+      dlvNoClick = true; setTimeout(() => (dlvNoClick = false), 0); // клик после переноса не открывает карточку
+      const lane = drop && laneAt(cur.cx, cur.cy);
+      if (!lane || lane.dataset.lane === cur.from) return;
+      if (await SM.moveDelivery(cur.x, lane.dataset.lane)) { SM._dlvLanded = cur.x.id; SM.refresh(); }
+    };
+    const onUp = (e) => { if (d && e.pointerId === d.pid) finish(true); };
+    const onCancel = (e) => { if (d && e.pointerId === d.pid) finish(false); };
+    board.addEventListener('pointerdown', (e) => {
+      const t = e.target.closest('.ticket.can-drag');
+      if (!t || d || (e.pointerType === 'mouse' && e.button !== 0)) return;
+      d = { t, pid: e.pointerId, x: SM.db.deliveries.find((z) => z.id === t.dataset.dlv), from: t.closest('.lane').dataset.lane, x0: e.clientX, y0: e.clientY, cx: e.clientX, cy: e.clientY, touch: e.pointerType !== 'mouse', on: false };
+      if (d.touch) d.timer = setTimeout(() => { if (d && !d.on) start(); }, 300);
+      addEventListener('pointermove', onMove, { passive: false }); addEventListener('pointerup', onUp); addEventListener('pointercancel', onCancel);
+      document.addEventListener('touchmove', noScroll, { passive: false });
+    });
+    board.addEventListener('contextmenu', (e) => { if (e.target.closest('.ticket.can-drag')) e.preventDefault(); });
+  }
+
   function deliveryPage(r) {
     const showCancel = r.q.c === '1', kind = r.q.kind || '';
     const list = SM.db.deliveries.filter((d) => !kind || d.kind === kind);
     const lanes = ['new', 'assigned', 'handed', 'delivered'].concat(showCancel ? ['cancelled'] : []);
-    const ticket = (d) => html`<div class="ticket" data-dlv="${d.id}"><div class="t-top"><span>${d.no}</span>${d.saleId ? html`<span>· ${(SM.db.sales.find((s) => s.id === d.saleId) || {}).no}</span>` : ''}<span class="right">${F.dm(d.createdAt)}</span></div>
+    const drag = SM.can('delivery', 2);
+    const ticket = (d) => html`<div class="ticket ${drag && d.status !== 'delivered' && d.status !== 'cancelled' ? 'can-drag' : ''} ${SM._dlvLanded === d.id ? 'landed' : ''}" data-dlv="${d.id}"><div class="t-top"><span>${d.no}</span>${d.saleId ? html`<span>· ${(SM.db.sales.find((s) => s.id === d.saleId) || {}).no}</span>` : ''}<span class="right">${F.dm(d.createdAt)}</span></div>
       <b>${SM.client(d.clientId).name}</b><div class="t-sub">${I('pin')}${d.address}</div>${d.driverId ? html`<div class="t-sub">${I('user')}${SM.driver(d.driverId).name}${d.carId ? ' · ' + SM.car(d.carId).plate : ''}</div>` : ''}
       <div class="t-foot"><span class="chip">${SM.DELIVERY_KIND[d.kind]}</span>${d.cost ? html`<span class="chip accent">${F.short(d.cost)} сум</span>` : html`<span class="chip">бесплатно</span>`}</div></div>`;
     return html`
       ${UI.pageHead('Доставка', 'Заявки: водитель, автомобиль, стоимость и статус. GPS-мониторинг — вне текущего объёма (ТЗ 15)', html`
         <label class="switch"><input type="checkbox" data-x="showc" ${showCancel ? 'checked' : ''}><i></i>Отменённые</label>
         ${SM.can('delivery', 2) ? html`<button class="btn btn-primary" data-x="new">${I('plus')}Новая заявка</button>` : ''}`)}
-      <div class="row mb-16">${UI.filterSelect('kind', kind, Object.entries(SM.DELIVERY_KIND), 'Все виды доставки')}</div>
-      <div class="board">${lanes.map((st) => { const l = list.filter((d) => d.status === st); return html`<div class="lane"><div class="lane-h"><i class="dot" style="background:var(--${SM.DELIVERY_STATUS[st][1].replace('b-', '')})"></i>${SM.DELIVERY_STATUS[st][0]}<span class="pill">${l.length}</span></div>${l.length ? l.map(ticket) : html`<p class="muted fs-12" style="padding:8px">Пусто</p>`}</div>`; })}</div>`;
+      <div class="row mb-16">${UI.filterSelect('kind', kind, Object.entries(SM.DELIVERY_KIND), 'Все виды доставки')}${drag ? html`<span class="board-hint right">${I('move')}<span class="h-mouse">Перетащите карточку в другую колонку, чтобы сменить статус</span><span class="h-touch">Удерживайте карточку и перетащите в другую колонку</span></span>` : ''}</div>
+      <div class="board">${lanes.map((st) => { const l = list.filter((d) => d.status === st); return html`<div class="lane" data-lane="${st}"><div class="lane-h"><i class="dot" style="background:var(--${SM.DELIVERY_STATUS[st][1].replace('b-', '')})"></i>${SM.DELIVERY_STATUS[st][0]}<span class="pill">${l.length}</span></div>${l.length ? l.map(ticket) : html`<p class="muted fs-12" style="padding:8px">Пусто</p>`}</div>`; })}</div>`;
   }
 
   /* ---------- Регистрация страниц ---------- */
@@ -690,7 +820,9 @@
     title: 'Доставка', render: deliveryPage,
     mount(el, r) {
       UI.bindFilters(el);
-      UI.$$('[data-dlv]', el).forEach((t) => (t.onclick = () => SM.openDelivery(t.dataset.dlv)));
+      UI.$$('[data-dlv]', el).forEach((t) => (t.onclick = () => { if (!dlvNoClick) SM.openDelivery(t.dataset.dlv); }));
+      bindBoardDrag(el);
+      SM._dlvLanded = null; // подсветка перенесённой карточки — один раз
       const n = el.querySelector('[data-x=new]'); if (n) n.onclick = deliveryForm;
       el.querySelector('[data-x=showc]').onchange = (e) => SM.setQuery({ c: e.target.checked ? '1' : '' }, true);
       if (r.q.open) SM.openDelivery(r.q.open);

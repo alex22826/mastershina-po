@@ -508,6 +508,25 @@ input[type=date]::-webkit-calendar-picker-indicator { cursor: pointer; opacity: 
 .ticket .t-sub { font-size: 12.5px; color: var(--text-2); margin-top: 3px; display: flex; gap: 6px; align-items: flex-start; }
 .ticket .t-sub svg { width: 14px; height: 14px; flex: none; margin-top: 2px; color: var(--text-3); }
 .ticket .t-foot { display: flex; align-items: center; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+/* канбан доставки: карточку можно перетащить в другую колонку */
+.board-hint { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 600; color: var(--text-3); }
+.board-hint svg { width: 15px; height: 15px; flex: none; }
+.board-hint .h-touch { display: none; }
+@media (hover: none) { .board-hint .h-mouse { display: none; } .board-hint .h-touch { display: inline; } }
+.ticket.can-drag { cursor: grab; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.ticket.drag-src { opacity: .35; transform: none; border-style: dashed; box-shadow: none; }
+.ticket-ghost { position: fixed; left: 0; top: 0; z-index: 400; margin: 0; pointer-events: none; cursor: grabbing; opacity: .97; transition: none; will-change: transform;
+  border-color: rgba(var(--accent-rgb), .6); box-shadow: 0 20px 44px rgba(0, 0, 0, .32), 0 0 0 3px rgba(var(--accent-rgb), .18); }
+body.is-dragging, body.is-dragging * { cursor: grabbing !important; -webkit-user-select: none; user-select: none; }
+.board.dragging { scroll-snap-type: none; }
+.board.dragging .lane { transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease; }
+.lane > .lane-h { order: -1; }
+.lane.drop-ok { border-color: rgba(var(--accent-rgb), .6); background: var(--accent-50); box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), .35); }
+.lane.drop-no { border-color: var(--bad); background: var(--bad-bg); }
+.lane.drop-no::before { content: attr(data-why); padding: 8px 10px; border-radius: 10px; background: var(--panel); color: var(--bad); font-size: 12px; font-weight: 650; line-height: 1.35; }
+.ticket.landed { animation: ticketLand .55s var(--ease); }
+@keyframes ticketLand { from { transform: scale(.95); border-color: var(--accent-t); box-shadow: 0 0 0 4px rgba(var(--accent-rgb), .3); } }
+@media (prefers-reduced-motion: reduce) { .ticket.landed { animation: none; } }
 
 /* ---------- Пустые состояния и подсказки ---------- */
 .empty { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 6px; padding: 34px 16px; color: var(--text-3); font-size: 13px; font-weight: 500; }
