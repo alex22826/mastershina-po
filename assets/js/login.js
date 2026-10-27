@@ -70,8 +70,10 @@ I18n.extend({
     var login = document.getElementById('loginName').value.trim();
     if (!login || !pass.value) { showNote('empty'); return; }
     busy = true;
-    SM.load();
-    SM.login(login, pass.value).then(function (res) {
+    SM.ready.then(function () {
+      if (!SM.server) SM.load();
+      return SM.login(login, pass.value);
+    }).then(function (res) {
       if (!res.ok) { busy = false; showNote(res.error === 'blocked' ? 'blocked' : 'wrong'); form.classList.remove('shake'); void form.offsetWidth; form.classList.add('shake'); return; }
       showNote('welcome', true);
       document.body.classList.add('leaving');

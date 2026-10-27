@@ -41,20 +41,24 @@
     const curName = s.cur === 'USD' ? '$' : 'сум';
     if (!prices) return `<table><thead><tr><th>№</th><th>Наименование</th><th>Ед.</th><th>Кол-во</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="3"><b>Всего мест</b></td><td class="doc-r"><b>${s.items.reduce((a, l) => a + l.qty, 0)}</b></td></tr></tfoot></table>`;
     if (vatCols) return `<table><thead><tr><th>№</th><th>Наименование</th><th>Ед.</th><th>Кол-во</th><th>Цена без НДС</th><th>Стоимость без НДС</th><th>Ставка</th><th>Сумма НДС</th><th>С НДС, ${curName}</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="5"><b>Итого</b></td><td class="doc-r"><b>${F.num(c.net, s.cur === 'USD' ? 2 : 0)}</b></td><td></td><td class="doc-r"><b>${F.num(c.vat, s.cur === 'USD' ? 2 : 0)}</b></td><td class="doc-r"><b>${F.num(c.total, s.cur === 'USD' ? 2 : 0)}</b></td></tr></tfoot></table>`;
-    return `<table><thead><tr><th>№</th><th>Наименование</th><th>Ед.</th><th>Кол-во</th><th>Цена, ${curName}</th><th>Скидка</th><th>Сумма, ${curName}</th></tr></thead><tbody>${rows}</tbody></table>
-      <table style="width:auto;margin-left:auto"><tbody>${s.docDisc ? `<tr><td>Скидка на документ ${s.docDisc}%</td><td class="doc-r">−${F.cur(c.docDisc, s.cur)}</td></tr>` : ''}${s.vat && v.enabled ? `<tr><td>Без НДС</td><td class="doc-r">${F.cur(c.net, s.cur)}</td></tr><tr><td>НДС ${v.rate}%</td><td class="doc-r">${F.cur(c.vat, s.cur)}</td></tr>` : '<tr><td colspan="2">Без НДС</td></tr>'}<tr><td><b>Итого к оплате</b></td><td class="doc-r"><b>${F.cur(c.total, s.cur)}</b></td></tr></tbody></table>`;
+    // итоги — строками в низу той же таблицы, под колонкой «Сумма»: «сверху» — без НДС, НДС, итог; «в цене» — итог и в т.ч. НДС
+    const n = (x) => F.num(x, s.cur === 'USD' ? 2 : 0), on = s.vat && v.enabled;
+    const tr = (label, val, b) => `<tr><td colspan="6" class="doc-r">${b ? '<b>' + label + '</b>' : label}</td><td class="doc-r nowrap">${b ? '<b>' + val + '</b>' : val}</td></tr>`;
+    const foot = (s.docDisc ? tr('Скидка на документ ' + s.docDisc + '%', '−' + n(c.docDisc)) : '')
+      + (!on ? tr('Итого к оплате', n(c.total), true) : SM.vatIncl(s) ? tr('Итого', n(c.total), true) + tr('в т.ч. НДС ' + v.rate + '%', n(c.vat)) : tr('Без НДС', n(c.net)) + tr('НДС ' + v.rate + '%', n(c.vat)) + tr('Итого', n(c.total), true));
+    return `<table><thead><tr><th>№</th><th>Наименование</th><th>Ед.</th><th>Кол-во</th><th>Цена, ${curName}</th><th>Скидка</th><th>Сумма, ${curName}</th></tr></thead><tbody>${rows}</tbody><tfoot>${foot}</tfoot></table>`;
   }
   SM.docHTML = function (doc) {
     const co = SM.db.settings.company;
     const s = doc.saleId ? SM.db.sales.find((x) => x.id === doc.saleId) : null;
     const cl = SM.client(doc.clientId || (s && s.clientId));
     const t = SM.DOC_TYPES[doc.type].name;
-    const head = (title) => `<div class="doc-head"><div><b>${E(co.name)}</b><br>${E(co.address)}<br>тел. ${E(co.phone)}</div><div class="doc-r">№ ${E(doc.no)}<br>от ${F.date(doc.date)}${s ? '<br>к продаже ' + E(s.no) : ''}</div></div><h1>${title} № ${E(doc.no)} от ${F.date(doc.date)}</h1>`;
+    const head = (title) => `<div class="doc-head"><div><b>${E(co.name)}</b><br>${E(co.address)}<br>тел. ${E(co.phone)}</div><div class="doc-r">№ ${E(doc.no)}<br>от ${F.date(doc.date)}${s ? '<br>к продаже ' + E(SM.saleNo(s)) : ''}</div></div><h1>${title} № ${E(doc.no)} от ${F.date(doc.date)}</h1>`;
     const note = doc.note ? `<p><b>Примечание:</b> ${E(doc.note)}</p>` : '';
-    const words = s ? `<p>Всего к оплате: <b>${E(SM.inWords(SM.saleCalc(s).total, s.cur))}</b>${s.vat && SM.vatCfg(s).enabled ? ', в т.ч. НДС ' + F.cur(SM.saleCalc(s).vat, s.cur) : ''}.</p>` : '';
+    const words = s ? `<p>Всего к оплате: <b>${E(SM.inWords(SM.saleCalc(s).total, s.cur))}</b>${s.vat && SM.vatCfg(s).enabled ? ', в т.ч. НДС ' + SM.vatCfg(s).rate + '% ' + F.cur(SM.saleCalc(s).vat, s.cur) : ', без НДС'}.</p>` : '';
     switch (doc.type) {
-      case 'invoice': return head('Счёт на оплату') + `<p><b>Поставщик:</b> ${req(co)}</p><p><b>Покупатель:</b> ${req(cl)}</p>${itemsTable(s)}${words}<p class="muted">Счёт действителен 3 банковских дня. Курс $ зафиксирован: ${F.num(s.rate)} сум.</p>${note}<div class="doc-sign"><div>Директор ${E(co.director)}</div><div>Гл. бухгалтер ${E(co.accountant)}</div></div>`;
-      case 'receipt': { const pt = SM.point(s.pointId); return `<div class="doc-head"><div><b>${E(co.name)}</b><br>${E(pt.name)}, ${E(pt.address)}</div><div class="doc-r">${F.dt(s.postedAt || doc.at)}</div></div><h1>Товарный чек № ${E(doc.no)}</h1><p>Покупатель: ${E(cl.name)}</p>${itemsTable(s)}${words}${note}<div class="doc-sign"><div>Продавец ${E(SM.user_(s.sellerId).name)}</div><div>Покупатель</div></div>`; }
+      case 'invoice': return head('Счёт на оплату') + `<p><b>Поставщик:</b> ${req(co)}</p><p><b>Заказчик:</b> ${req(cl)}</p>${itemsTable(s)}${words}<p class="muted">Счёт действителен 3 банковских дня. Курс $ зафиксирован: ${F.num(s.rate)} сум.</p>${note}<div class="doc-sign"><div>Директор ${E(co.director)}</div><div>Гл. бухгалтер ${E(co.accountant)}</div></div>`;
+      case 'receipt': { const pt = SM.point(s.pointId); return `<div class="doc-head"><div><b>${E(co.name)}</b><br>${E(pt.name)}, ${E(pt.address)}</div><div class="doc-r">${F.dt(s.postedAt || doc.at)}</div></div><h1>Товарный чек № ${E(doc.no)}</h1><p><b>Поставщик:</b> ${E(co.name)}, ${E(pt.name)}, ${E(pt.address)}</p><p><b>Заказчик:</b> ${E(cl.name)}</p>${itemsTable(s)}${words}${note}<div class="doc-sign"><div>Поставщик</div><div>Заказчик</div></div>`; }
       case 'waybill': return head('Накладная') + `<p><b>Отправитель:</b> ${E(co.name)}, ${E(SM.point(s.pointId).name)}</p><p><b>Получатель:</b> ${req(cl)}</p>${itemsTable(s)}${words}${note}<div class="doc-sign"><div>Отпустил</div><div>Получил</div></div>`;
       case 'facture': return head('Счёт-фактура') + `<p><b>Поставщик:</b> ${req(co)}</p><p><b>Покупатель:</b> ${req(cl)}</p>${itemsTable(s, { vatCols: true })}${words}${note}<div class="doc-sign"><div>Руководитель ${E(co.director)}</div><div>Гл. бухгалтер ${E(co.accountant)}</div><div>Получил</div></div>`;
       case 'noprice': return head('Накладная (без цен)') + `<p><b>Отправитель:</b> ${E(co.name)}, ${E(SM.point(s.pointId).name)}</p><p><b>Получатель:</b> ${E(cl.name)}${cl.address ? ', ' + E(cl.address) : ''}</p>${itemsTable(s, { prices: false })}${note}<div class="doc-sign"><div>Отпустил</div><div>Водитель</div><div>Получил</div></div>`;
@@ -86,7 +90,7 @@
     const m = UI.modal({ title: 'Сформировать документ', sub: 'Реквизиты подставятся автоматически, номер присвоится при сохранении', size: 'wide',
       body: html`<form class="form-grid" autocomplete="off">
         <div class="field"><label>Вид документа</label><select class="select" name="type">${UI.options(Object.entries(SM.DOC_TYPES).map(([k, v]) => [k, v.name]), 'invoice')}</select></div>
-        <div class="field sale-f"><label>Продажа</label><select class="select" name="saleId">${UI.options(sales.map((s) => [s.id, s.no + ' · ' + SM.client(s.clientId).name + ' · ' + F.cur(SM.saleCalc(s).total, s.cur)]), sales[0] && sales[0].id)}</select></div>
+        <div class="field sale-f"><label>Продажа</label><select class="select" name="saleId">${UI.options(sales.map((s) => [s.id, SM.saleNo(s) + ' · ' + SM.client(s.clientId).name + ' · ' + F.cur(SM.saleCalc(s).total, s.cur)]), sales[0] && sales[0].id)}</select></div>
         <div class="field cl-f"><label>Контрагент</label><select class="select" name="clientId">${UI.options(SM.db.clients.map((c) => [c.id, c.name]), 'c1')}</select></div>
         <div class="field act-f"><label>Период с</label><input class="input" type="date" name="from" value="${D.iso(D.addDays(D.today(), -30))}"></div>
         <div class="field act-f"><label>по</label><input class="input" type="date" name="to" value="${D.todayISO()}"></div>
@@ -110,13 +114,19 @@
   function documentsPage(r) {
     const type = r.q.type || '', q = (r.q.q || '').toLowerCase();
     const all = SM.db.documents.filter(docVisible);
-    const list = all.filter((d) => (!type || d.type === type) && (!q || (d.no + ' ' + SM.client(d.clientId).name).toLowerCase().includes(q))).slice().reverse();
+    const list = type === 'ctr' ? [] : all.filter((d) => (!type || d.type === type) && (!q || (d.no + ' ' + SM.client(d.clientId).name).toLowerCase().includes(q))).slice().reverse();
+    // договоры из конструктора — в общем списке, со статусом Didox и отправкой из строки
+    const K = SM.contracts, edit = SM.can('documents', 2);
+    const ctrs = !type || type === 'ctr' ? K.list().filter((c) => (!SM.flag('ownOnly') || SM.client(c.clientId).sellerId === SM.user.id) && (!q || (c.no + ' ' + (c.title || '') + ' ' + SM.client(c.clientId).name).toLowerCase().includes(q))).slice().reverse() : [];
     return html`
       ${UI.pageHead('Документы', 'Счёт, товарный чек, накладная, счёт-фактура, акт сверки, договор, накладная без цен · печать и сохранение в файл', SM.can('documents', 2) || SM.can('sales', 2) ? html`<button class="btn btn-primary" data-x="new">${I('plus')}Сформировать</button>` : '')}
       <div class="grid g-4 keep-2 stagger mb-16">${['invoice', 'facture', 'waybill', 'act'].map((t) => UI.kpi({ label: SM.DOC_TYPES[t].name, icon: 'file', value: all.filter((d) => d.type === t).length, count: all.filter((d) => d.type === t).length, foot: 'в истории' }))}</div>
-      <div class="card"><div class="card-h">${UI.searchInput(r.q.q, '№ документа или контрагент')}${UI.filterSelect('type', type, Object.entries(SM.DOC_TYPES).map(([k, v]) => [k, v.name]), 'Все виды')}</div>
-        <div class="card-b" style="padding-top:12px">${list.length ? html`<div class="table-wrap"><table class="table"><thead><tr><th>Документ</th><th>Контрагент</th><th>Основание</th><th>Сформировал</th><th></th></tr></thead><tbody>
-          ${list.map((d) => html`<tr class="click" data-doc="${d.id}"><td><span class="cell-title">${SM.DOC_TYPES[d.type].name}</span><span class="cell-sub mono">${d.no} · ${F.date(d.date)}</span></td><td>${SM.client(d.clientId).name}</td><td>${d.saleId ? (SM.db.sales.find((s) => s.id === d.saleId) || {}).no : d.type === 'act' ? F.date(d.from) + ' — ' + F.date(d.to) : '—'}</td><td>${SM.user_(d.by).name}<span class="cell-sub">${F.dt(d.at)}</span></td><td class="r"><span class="btn btn-ghost btn-sm">${I('eye')}Открыть</span></td></tr>`)}</tbody></table></div>` : UI.empty('Документов нет', 'Сформируйте документ по продаже или контрагенту', 'file')}</div></div>`;
+      <div class="card"><div class="card-h">${UI.searchInput(r.q.q, '№ документа или контрагент')}${UI.filterSelect('type', type, [...Object.entries(SM.DOC_TYPES).map(([k, v]) => [k, v.name]), ['ctr', 'Договор']], 'Все виды')}</div>
+        <div class="card-b" style="padding-top:12px">${list.length || ctrs.length ? html`<div class="table-wrap"><table class="table"><thead><tr><th>Документ</th><th>Контрагент</th><th>Основание</th><th>Сформировал</th><th></th></tr></thead><tbody>
+          ${ctrs.map((c) => html`<tr data-ctr-row="${c.id}"><td><span class="cell-title">${c.title || 'Договор'}</span><span class="cell-sub mono">${c.no} · ${F.date(c.date)}</span></td><td>${SM.client(c.clientId).name}<span class="cell-sub num">${c.amount ? F.cur(+c.amount, c.cur) : '—'}</span></td>
+            <td>${UI.badge(K.STATUS[c.status] || K.STATUS.draft)}${c.didoxId ? html`<span class="cell-sub mono">Didox ${c.didoxId}</span>` : ''}</td><td>${SM.user_(c.by).name}<span class="cell-sub">${F.dt(c.at)}</span></td>
+            <td class="r nowrap doc-act">${edit && (c.status === 'draft' || c.status === 'rejected') ? html`<button type="button" class="btn btn-primary btn-sm" data-didox="${c.id}">${I('send')}Отправить в Didox</button>` : ''}<button type="button" class="btn btn-ghost btn-sm" data-ctr-open="${c.id}">${I('eye')}Открыть</button></td></tr>`)}
+          ${list.map((d) => html`<tr class="click" data-doc="${d.id}"><td><span class="cell-title">${SM.DOC_TYPES[d.type].name}</span><span class="cell-sub mono">${d.no} · ${F.date(d.date)}</span></td><td>${SM.client(d.clientId).name}</td><td>${d.saleId ? SM.saleNo(SM.db.sales.find((s) => s.id === d.saleId)) : d.type === 'act' ? F.date(d.from) + ' — ' + F.date(d.to) : '—'}</td><td>${SM.user_(d.by).name}<span class="cell-sub">${F.dt(d.at)}</span></td><td class="r"><span class="btn btn-ghost btn-sm">${I('eye')}Открыть</span></td></tr>`)}</tbody></table></div>` : UI.empty('Документов нет', 'Сформируйте документ по продаже или контрагенту', 'file')}</div></div>`;
   }
 
   /* ---------- Отчёты (ТЗ 18): фильтры и выгрузка в Excel ----------
@@ -173,7 +183,7 @@
       const mode = r.q.m || 'clients';
       const mineClient = (id) => !own || SM.client(id).sellerId === SM.user.id;
       if (mode === 'history') return { title: 'История погашения (оплаты без привязки к продаже и по продажам в долг)', cols: ['Дата', 'Контрагент', 'Способ', 'Сумма', 'Валюта', 'Статус'], rows: SM.db.payments.filter((p) => { const s = p.saleId && SM.db.sales.find((x) => x.id === p.saleId); return p.dir === 'in' && (s ? s.credit && SM.saleVisible(s) : mineClient(p.clientId)); }).map((p) => [F.date(p.at), SM.client(p.clientId).name, SM.method(p.method).name, p.amount, p.cur, SM.PAY_STATUS[p.status][0]]), num: [3], sw: [['clients', 'По клиентам'], ['sellers', 'По продавцам'], ['overdue', 'Просроченные'], ['history', 'История погашения']] };
-      if (mode === 'overdue') return { title: 'Просроченные долги', cols: ['Продажа', 'Клиент', 'Продавец', 'Срок', 'Дней просрочки', 'Долг, сум'], rows: SM.db.sales.filter((s) => SM.overdue(s) && SM.saleVisible(s)).map((s) => [s.no, SM.client(s.clientId).name, SM.user_(s.sellerId).name, F.date(s.due), D.diffDays(D.todayISO(), s.due), Math.round(SM.toUZS(SM.saleCalc(s).debt, s.cur, s.rate))]), num: [4, 5], total: true, sw: [['clients', 'По клиентам'], ['sellers', 'По продавцам'], ['overdue', 'Просроченные'], ['history', 'История погашения']] };
+      if (mode === 'overdue') return { title: 'Просроченные долги', cols: ['Продажа', 'Клиент', 'Продавец', 'Срок', 'Дней просрочки', 'Долг, сум'], rows: SM.db.sales.filter((s) => SM.overdue(s) && SM.saleVisible(s)).map((s) => [SM.saleNo(s), SM.client(s.clientId).name, SM.user_(s.sellerId).name, F.date(s.due), D.diffDays(D.todayISO(), s.due), Math.round(SM.toUZS(SM.saleCalc(s).debt, s.cur, s.rate))]), num: [4, 5], total: true, sw: [['clients', 'По клиентам'], ['sellers', 'По продавцам'], ['overdue', 'Просроченные'], ['history', 'История погашения']] };
       if (mode === 'sellers') { const m = {}; SM.db.clients.filter((c) => mineClient(c.id)).forEach((c) => { const b = SM.balance(c.id); if (b > 0.5) { const k = c.sellerId ? SM.user_(c.sellerId).name : 'Без продавца'; m[k] = m[k] || [0, 0]; m[k][0]++; m[k][1] += b; } }); return { title: 'Дебиторская задолженность по продавцам', cols: ['Продавец', 'Клиентов-должников', 'Сумма долга, сум'], rows: Object.entries(m).map(([k, v]) => [k, v[0], Math.round(v[1])]), num: [1, 2], total: true, sw: [['clients', 'По клиентам'], ['sellers', 'По продавцам'], ['overdue', 'Просроченные'], ['history', 'История погашения']] }; }
       return { title: 'Общая дебиторская задолженность по клиентам', cols: ['Клиент', 'Телефон', 'Продавец', 'Долг, сум'], rows: SM.db.clients.filter((c) => SM.balance(c.id) > 0.5 && mineClient(c.id)).map((c) => [c.name, c.phone, c.sellerId ? SM.user_(c.sellerId).name : '', Math.round(SM.balance(c.id))]), num: [3], total: true, sw: [['clients', 'По клиентам'], ['sellers', 'По продавцам'], ['overdue', 'Просроченные'], ['history', 'История погашения']] };
     }
@@ -224,6 +234,8 @@
       UI.bindSearch(el); UI.bindFilters(el);
       const n = el.querySelector('[data-x=new]'); if (n) n.onclick = newDocModal;
       UI.$$('[data-doc]', el).forEach((x) => (x.onclick = () => docPreview(SM.db.documents.find((d) => d.id === x.dataset.doc))));
+      UI.$$('[data-didox]', el).forEach((b) => (b.onclick = () => SM.contracts.didox(SM.contracts.list().find((c) => c.id === b.dataset.didox))));
+      UI.$$('[data-ctr-open]', el).forEach((b) => (b.onclick = () => SM.contracts.open(b.dataset.ctrOpen)));
       if (r.q.open) { const d = SM.db.documents.find((x) => x.id === r.q.open); if (d && docVisible(d)) docPreview(d); }
     },
   });

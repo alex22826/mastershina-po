@@ -10,7 +10,7 @@
     /* тема как в системе: светлая 8:00–18:00, тёмная 18:00–8:00 */
     (function () { var h = new Date().getHours(); document.documentElement.setAttribute('data-theme', h >= 8 && h < 18 ? 'light' : 'dark'); })();
   </script>
-  <link rel="stylesheet" href="assets/css/admin.css?v=6">
+  <link rel="stylesheet" href="assets/css/admin.css?v=15">
   <style>
     body { background: var(--bg); }
     .sg { max-width: 1240px; margin: 0 auto; padding: 32px 24px 80px; }
@@ -37,9 +37,10 @@
 </head>
 <body>
   <div class="sg" id="sg"></div>
-  <script src="assets/js/core.js?v=6"></script>
-  <script src="assets/js/data.js?v=6"></script>
-  <script src="assets/js/ui.js?v=6"></script>
+  <script src="assets/js/core.js?v=15"></script>
+  <script src="assets/js/data.js?v=15"></script>
+  <script src="assets/js/ui.js?v=15"></script>
+  <script src="assets/js/datepicker.js?v=15"></script>
   <script>
   (function () {
     var SM = window.SM, UI = SM.ui, html = SM.html, raw = SM.raw, I = UI.icon, F = SM.fmt;
@@ -79,7 +80,7 @@
         <div class="row"><button class="btn btn-primary btn-sm">${I('plus')}Маленькая</button><button class="btn btn-primary">Обычная</button><button class="btn btn-primary btn-lg">${I('check')}Большая</button><button class="btn btn-neon"><span>Start</span>${I('arrowRight')}<span class="nt"><span>Start</span>${I('arrowRight')}</span></button>
           <span class="muted fs-13">Изменить / удалить в строке таблицы:</span>${UI.actBtns('demo', { editTip: 'Изменить', delTip: 'Удалить' })}</div></div></div>`)}
 
-      ${sec('Формы', 'поля сумм с разрядами и пределом, свои выпадающие списки (на телефоне — шторка снизу)', html`<div class="card"><div class="card-b"><form class="form-grid g3" onsubmit="return false">
+      ${sec('Формы', 'поля сумм с разрядами и пределом, свои выпадающие списки и календарь дат — клик по полю (на телефоне — шторка снизу)', html`<div class="card"><div class="card-b"><form class="form-grid g3" onsubmit="return false">
         <div class="field"><label>Клиент <span class="req">*</span></label><select class="select">${UI.options(SM.db.clients.map((c) => [c.id, c.name]))}</select></div>
         <div class="field"><label>Поиск</label><label class="input-icon">${I('search')}<input class="input" placeholder="205/55 R16, колодки нексия"></label></div>
         <div class="field"><label>Сумма (не больше 5 800 000)</label><div class="input-suffix"><input class="input" id="dMoney" ${UI.moneyAttrs(5800000)}><em>сум</em></div><span class="hint">Разряды ставятся сами, больше долга ввести нельзя</span></div>

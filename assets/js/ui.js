@@ -40,6 +40,7 @@
     upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>',
     excel: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="m8 8 8 8M16 8l-8 8"/>',
     filter: '<path d="M22 3H2l8 9.5V19l4 2v-8.5z"/>',
+    arrowUp: '<path d="M12 19V5M5 12l7-7 7 7"/>', arrowDown: '<path d="M12 5v14M19 12l-7 7-7-7"/>',
     arrowRight: '<path d="M5 12h14M12 5l7 7-7 7"/>', arrowLeft: '<path d="M19 12H5M12 19l-7-7 7-7"/>',
     move: '<path d="M12 2v20M2 12h20M12 2l-3 3M12 2l3 3M12 22l-3-3M12 22l3-3M2 12l3-3M2 12l3 3M22 12l-3-3M22 12l-3 3"/>',
     chevronRight: '<path d="m9 18 6-6-6-6"/>', chevronDown: '<path d="m6 9 6 6 6-6"/>',
@@ -93,7 +94,7 @@
   UI.$$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
   const AV = ['#9c1c3a', '#7c3aed', '#0e7490', '#b45309', '#15803d', '#be185d', '#1d4ed8', '#4d7c0f'];
   UI.avatarColor = (k) => { let h = 0; String(k).split('').forEach((c) => (h = (h * 31 + c.charCodeAt(0)) >>> 0)); return AV[h % AV.length]; };
-  UI.initials = (name) => String(name || '?').replace(/[«»"]/g, '').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join('');
+  UI.initials = (name) => String((SM.i18n ? SM.i18n.staff(name) : name) || '?').replace(/[«»"]/g, '').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join('');
   UI.avatar = (name, id, cls = '') => html`<span class="avatar ${cls}" style="background:${UI.avatarColor(id || name)}">${UI.initials(name)}</span>`;
   UI.badge = ([t, c], extra = '') => html`<span class="badge ${c} ${extra}">${t}</span>`;
   UI.empty = (title, text, icon = 'inbox') => html`<div class="empty">${I(icon)}<b>${title}</b>${text || ''}</div>`;
@@ -106,13 +107,14 @@
   };
   UI.money = (v, cur = 'UZS') => html`<span class="money">${cur === 'USD' ? '$' + F.num(v, 2) : F.num(Math.round(v))}${cur === 'USD' ? '' : html`<small>сум</small>`}</span>`;
   UI.signed = (v, cur = 'UZS') => { const f = (x) => (cur === 'USD' ? '$' + F.num(x, 2) : F.m(x)); return Math.abs(v) < 0.005 ? html`<span class="amt-zero">0</span>` : v > 0 ? html`<span class="amt-in">+${f(v)}</span>` : html`<span class="amt-out">−${f(-v)}</span>`; };
-  UI.thumb = (p, lg) => { const icon = SM.isTire(p) ? 'tire' : p.cat === 'c-wheels' ? 'wheel' : p.cat === 'c-oil' ? 'droplet' : p.cat === 'c-acc' ? 'battery' : SM.catRoot(p.cat).id === 'c-parts' ? 'wrench' : 'box'; return html`<span class="thumb ${lg ? 'lg' : ''} ${SM.isTire(p) ? 'tire' : ''}">${I(icon)}</span>`; };
-  UI.kpi = ({ label, value, count, unit, icon, foot, spark, sparkColor, href, cls = '' }) => html`
+  UI.thumb = (p, lg) => { if (p.photo) return html`<span class="thumb photo ${lg ? 'lg' : ''}"><img src="${p.photo}" alt="" loading="lazy" decoding="async"></span>`; const icon = SM.isTire(p) ? 'tire' : p.cat === 'c-wheels' ? 'wheel' : p.cat === 'c-oil' ? 'droplet' : p.cat === 'c-acc' ? 'battery' : SM.catRoot(p.cat).id === 'c-parts' ? 'wrench' : 'box'; return html`<span class="thumb ${lg ? 'lg' : ''} ${SM.isTire(p) ? 'tire' : ''}">${I(icon)}</span>`; };
+  UI.kpi = ({ label, value, count, unit, icon, foot, spark, sparkColor, sparkKey, sparkFit, href, cls = '' }) => html`
     <div class="card kpi ${href ? 'clickable' : ''} ${spark ? 'has-spark' : ''} ${cls}" ${href ? raw(`data-href="${href}"`) : ''}>
+      ${/\bk-accent\b/.test(cls) ? raw('<span class="k-fx" aria-hidden="true"><i class="k-glow"></i><i class="k-tire"></i></span>') : ''}
       <div class="k-label">${icon ? I(icon) : ''}${label}</div>
       <div class="k-value" ${count != null ? raw(`data-count="${count}"`) : ''}>${value}${unit ? html`<small>${unit}</small>` : ''}</div>
       ${foot ? html`<div class="k-foot">${foot}</div>` : ''}
-      ${spark ? UI.spark(spark, sparkColor) : ''}
+      ${spark ? UI.spark(spark, sparkColor, sparkKey, sparkFit) : ''}
     </div>`;
   UI.delta = (cur, prev, invert) => {
     if (!prev) return html`<span class="delta flat">—</span>`;
@@ -405,8 +407,20 @@
     ov.addEventListener('click', (e) => { if (e.target.closest('[data-close]')) UI.closeTop(); });
     ov._onClose = onClose;
     openLayer(ov);
+    UI.bindFiles(ov);
     return ov;
   };
+  /* поле файлов: кнопка в стиле проекта + скрытый input + выбранные файлы чипами с крестиком;
+     при multiple повторный выбор добавляет файлы к уже выбранным, крестик убирает файл из input.files */
+  UI.fileField = (name, { label = 'Прикрепить файл', multiple = false, accept = '' } = {}) => html`<div class="file-pick"><label class="btn btn-secondary">${I('paperclip')}${label}<input type="file" name="${name}" ${multiple ? 'multiple' : ''} ${accept ? raw('accept="' + accept + '"') : ''} hidden></label><div class="file-chips"></div></div>`;
+  UI.bindFiles = (root) => root.querySelectorAll('.file-pick').forEach((box) => {
+    const inp = box.querySelector('input[type=file]'), chips = box.querySelector('.file-chips');
+    let kept = [];
+    const set = (list) => { kept = list; const dt = new DataTransfer(); kept.forEach((f) => dt.items.add(f)); inp.files = dt.files;
+      chips.innerHTML = kept.map((f, i) => String(html`<span class="chip">${I('paperclip')}<span class="fc-n">${f.name}</span><button type="button" class="fc-x" data-rm="${i}" aria-label="Убрать файл">${I('x')}</button></span>`)).join(''); };
+    inp.addEventListener('change', () => { const add = Array.from(inp.files || []); set(inp.multiple ? kept.concat(add.filter((f) => !kept.some((k) => k.name === f.name && k.size === f.size))) : add); });
+    chips.addEventListener('click', (e) => { const b = e.target.closest('[data-rm]'); if (b) set(kept.filter((_, i) => i !== +b.dataset.rm)); });
+  });
   UI.drawer = function ({ title, sub, body, foot, size = '', onClose, head }) {
     const ov = document.createElement('div');
     ov.className = 'overlay';
@@ -491,12 +505,17 @@
     else { left = r.left + r.width / 2 - w / 2; top = r.top - h - 10; if (top < 6) top = r.bottom + 10; }
     t.style.left = Math.max(8, Math.min(left, innerWidth - w - 8)) + 'px';
     t.style.top = Math.max(6, top) + 'px';
-    requestAnimationFrame(() => t.classList.add('on'));
+    // показ — кадром позже; если подсказку уже спрятали (нажатие), не возвращаем её
+    requestAnimationFrame(() => { if (tipFor === el) t.classList.add('on'); });
   }
   const hideTip = () => { tipFor = null; if (tip) tip.classList.remove('on'); };
   UI.showTip = showTip; UI.hideTip = hideTip;
+  // касание пальцем тоже шлёт mouseover: на телефоне подсказки кнопок не показываем, убрать их там нечем
+  let touchAt = 0;
+  document.addEventListener('touchstart', () => { touchAt = Date.now(); }, { capture: true, passive: true });
   document.addEventListener('mouseover', (e) => {
     let el = e.target.closest && e.target.closest('[data-tip]');
+    if (el && !el.dataset.tipRail && Date.now() - touchAt < 1000) el = null;
     // подписи разделов в «рельсе» нужны только на сенсорном планшете: с мышью сайдбар раскрывается сам
     if (el && el.dataset.tipRail && !matchMedia('(min-width: 721px) and (hover: none)').matches) el = null;
     if (el && el !== tipFor) { tipFor = el; showTipFor(el); }
@@ -518,6 +537,7 @@
       el.innerHTML = '';
       el.appendChild(render(spec, w, animate));
     });
+    UI.morphSparks(root);
   };
   let rz;
   addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => UI.drawCharts(document, false), 150); });
@@ -602,13 +622,42 @@
     return svg;
   }
   UI.legend = (items) => html`<div class="legend">${items.map((x) => html`<span><i style="background:${x.color}"></i>${x.name}${x.value != null ? html` · <b>${x.value}</b>` : ''}</span>`)}</div>`;
-  UI.spark = function (values, color = 'var(--s1)') {
+  /* Спарклайн. key — постоянное имя графика на странице: при перерисовке с другими данными (смена периода) линия
+     перетекает из старой формы в новую (UI.morphSparks), без key — просто рисуется. */
+  const SPW = 96, SPH = 34;
+  // fit — шкала от минимума до максимума ряда (остатки: иначе крупный остаток рисуется плоской линией у верха)
+  const sparkPts = (values, fit) => { const max = fit ? Math.max(...values) : Math.max(...values, 1), min = fit ? Math.min(...values) : Math.min(...values, 0); if (max === min) return values.map((v, i) => [(i / (values.length - 1)) * SPW, fit ? SPH / 2 : SPH - 3]); return values.map((v, i) => [(i / (values.length - 1)) * SPW, SPH - 3 - ((v - min) / (max - min || 1)) * (SPH - 6)]); };
+  const sparkD = (pts) => pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
+  UI.spark = function (values, color = 'var(--s1)', key, fit) {
     if (!values || values.length < 2) return '';
-    const max = Math.max(...values, 1), min = Math.min(...values, 0);
-    const W = 96, H = 34;
-    const pts = values.map((v, i) => [(i / (values.length - 1)) * W, H - 3 - ((v - min) / (max - min || 1)) * (H - 6)]);
-    const d = pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
-    return raw(`<svg class="k-spark" viewBox="0 0 ${W} ${H}" aria-hidden="true"><path d="${d} L${W},${H} L0,${H}Z" fill="${color}" opacity=".12"/><path d="${d}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`);
+    const d = sparkD(sparkPts(values, fit));
+    return raw(`<svg class="k-spark" viewBox="0 0 ${SPW} ${SPH}" aria-hidden="true"${key ? ` data-spark="${SM.esc(key)}" data-d="${d}" data-v="${values.map((v) => Math.round(v * 100) / 100).join(',')}"` : ''}><path class="sp-area" d="${d} L${SPW},${SPH} L0,${SPH}Z" fill="${color}" opacity=".12"/><path class="sp-line" d="${d}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`);
+  };
+  // ломаная → N точек с равным шагом по x (линейная интерполяция): у старой и новой формы одно число точек
+  const resample = (pts, n) => Array.from({ length: n }, (_, i) => { const x = (i / (n - 1)) * SPW, k = Math.min(pts.length - 2, Math.floor((x / SPW) * (pts.length - 1))), a = pts[k], b = pts[k + 1], t = b[0] === a[0] ? 0 : (x - a[0]) / (b[0] - a[0]); return [x, a[1] + (b[1] - a[1]) * Math.max(0, Math.min(1, t))]; });
+  const parseD = (d) => (d.match(/-?[\d.]+,-?[\d.]+/g) || []).map((s) => s.split(',').map(Number));
+  const sparkLast = new Map(); // key → путь, который сейчас на экране
+  UI.morphSparks = function (root = document) {
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    UI.$$('svg.k-spark[data-spark]', root).forEach((svg) => {
+      const key = svg.dataset.spark, to = svg.dataset.d, from = sparkLast.get(key);
+      sparkLast.set(key, to);
+      if (!from || from === to) return;
+      svg.classList.add('morph'); // без «прорисовки» штрихом: линия уже была на экране
+      if (reduce) return;
+      const N = 48, A = resample(parseD(from), N), B = resample(parseD(to), N);
+      const line = svg.querySelector('.sp-line'), area = svg.querySelector('.sp-area');
+      const set = (d) => { line.setAttribute('d', d); area.setAttribute('d', d + ` L${SPW},${SPH} L0,${SPH}Z`); };
+      const t0 = performance.now(), dur = 450, ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+      set(sparkD(A));
+      const step = (now) => {
+        if (!svg.isConnected) return;
+        const t = Math.min(1, (now - t0) / dur), e = ease(t);
+        if (t < 1) { set(sparkD(A.map((p, i) => [p[0], p[1] + (B[i][1] - p[1]) * e]))); requestAnimationFrame(step); }
+        else set(to);
+      };
+      requestAnimationFrame(step);
+    });
   };
   /* кольцевая диаграмма с подписью в центре */
   UI.donut = function (parts, { size = 168, label = '', value = '' } = {}) {

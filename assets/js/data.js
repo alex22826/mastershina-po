@@ -1,13 +1,35 @@
 /* =========================================================
    SM AVTO BASE — демо-данные (упрощённые, чтобы руководитель
-   быстро разобрался «что где»): 2 точки, 5 товаров,
-   2 контрагента, 2 заказа, 3 расхода компании.
+   быстро разобрался «что где»): 2 точки, 15 товаров,
+   2 контрагента и поставщик, 2 заказа, поступление, 3 расхода компании.
    Даты считаются от «сегодня», при открытии через день сдвигаются.
    ========================================================= */
 (function () {
   'use strict';
   const SM = window.SM;
   const D = SM.d;
+  const T = (size, season, model, index) => { const m = size.match(/(\d+)\/(\d+)\s*(R[\d.]+)/); return { size, width: m[1], profile: m[2], radius: m[3], season, model, index }; };
+  const img = (n) => 'assets/img/products/' + n + '.webp';
+
+  /* 10 товаров от 22.10 (п.13 Алексея; так же записаны в общей базе) и их оприходование (п.15): qty — сколько пришло
+     поступлением от «ООО «AvtoTrade Supply»» на «Центральный склад», по себестоимости, без НДС */
+  const NEW10 = [
+    { code: 'SM-00006', qty: 8, name: 'Continental PremiumContact 6 225/45 R17 94Y XL', sku: '0357035', alt: ['конти 225 45 17', 'премиум контакт 6'], cat: 'c-t-summer', maker: 'Continental, Германия', brand: 'Continental', unit: 'шт', attrs: T('225/45 R17', 'Летняя', 'PremiumContact 6', '94Y'), buy: 1320000, extra: 30000, buyCur: 'UZS', price: 1790000, cur: 'UZS', min: 4, photo: img('tire-summer') },
+    { code: 'SM-00007', qty: 16, name: 'Bridgestone Turanza T005 185/65 R15 88H', sku: '13452', alt: ['бриджстоун 185 65 15', 'шина кобальт 15'], cat: 'c-t-summer', maker: 'Bridgestone, Япония', brand: 'Bridgestone', unit: 'шт', attrs: T('185/65 R15', 'Летняя', 'Turanza T005', '88H'), buy: 690000, extra: 15000, buyCur: 'UZS', price: 920000, cur: 'UZS', min: 8, photo: img('tire-summer') },
+    { code: 'SM-00008', qty: 12, name: 'Pirelli Ice Zero 2 215/60 R16 99T XL, шипы', sku: '3986000', alt: ['пирелли шипы 16', 'айс зеро'], cat: 'c-t-winter', maker: 'Pirelli, Италия', brand: 'Pirelli', unit: 'шт', attrs: T('215/60 R16', 'Зимняя (шипы)', 'Ice Zero 2', '99T'), buy: 96, extra: 4, buyCur: 'USD', price: 128, cur: 'USD', min: 4, photo: img('tire-winter') },
+    { code: 'SM-00009', qty: 8, name: 'Yokohama BluEarth-4S AW21 205/55 R16 94V', sku: 'R4446', alt: ['йокогама всесезон 16', 'aw21'], cat: 'c-t-all', maker: 'Yokohama, Япония', brand: 'Yokohama', unit: 'шт', attrs: T('205/55 R16', 'Всесезонная', 'BluEarth-4S AW21', '94V'), buy: 880000, extra: 20000, buyCur: 'UZS', price: 1190000, cur: 'UZS', min: 4, photo: img('tire-all') },
+    { code: 'SM-00010', qty: 8, name: 'Диск литой K&K Сканди 6,5×16 5×105 ET39 DIA 56,6', sku: '74916', alt: ['диск кобальт 16', 'литьё 5x105'], cat: 'c-wheels', maker: 'K&K, Россия', brand: 'K&K', unit: 'шт', attrs: { size: '6,5×16', pcd: '5×105', et: '39', dia: '56,6', fits: 'Cobalt, Lacetti, Gentra' }, buy: 650000, extra: 15000, buyCur: 'UZS', price: 890000, cur: 'UZS', min: 4, photo: img('wheel') },
+    { code: 'SM-00011', qty: 6, name: 'Аккумулятор Varta Blue Dynamic E11 74 Ач 680 А, обратная полярность', sku: '574012068', alt: ['акб 74', 'варта 74'], cat: 'c-acc', maker: 'Varta, Германия', brand: 'Varta', unit: 'шт', attrs: { capacity: '74 Ач', current: '680 А', polarity: 'Обратная (− +)' }, buy: 1150000, extra: 20000, buyCur: 'UZS', price: 1480000, cur: 'UZS', min: 2, photo: img('battery') },
+    { code: 'SM-00012', qty: 12, name: 'Колодки тормозные передние Hi-Q SP1157 (Nexia, Lanos)', sku: 'SP1157', alt: ['колодки нексия', 'тормозные нексия передние', 'колодки ланос'], cat: 'c-p-brakes', maker: 'Sangsin Brake, Корея', brand: 'Hi-Q', unit: 'компл', attrs: { fits: 'Nexia, Lanos', qty: '4 шт' }, buy: 120000, extra: 3000, buyCur: 'UZS', price: 175000, cur: 'UZS', min: 6, photo: img('brake-pads') },
+    { code: 'SM-00013', qty: 15, name: 'Антифриз Felix Carbox G12+ красный, 5 кг', sku: '430206033', alt: ['антифриз красный', 'тосол g12'], cat: 'c-oil', maker: 'Тосол-Синтез, Россия', brand: 'Felix', unit: 'кан', attrs: { volume: '5 кг', type: 'G12+', spec: 'до −40 °C' }, buy: 115000, extra: 3000, buyCur: 'UZS', price: 165000, cur: 'UZS', min: 6, photo: img('antifreeze') },
+    { code: 'SM-00014', qty: 20, name: 'Щётки стеклоочистителя Bosch Aerotwin A929S 600/450 мм, комплект', sku: '3397118929', alt: ['дворники 600 450', 'щётки бош'], cat: 'c-misc', maker: 'Bosch, Германия', brand: 'Bosch', unit: 'компл', attrs: { length: '600/450 мм', type: 'Бескаркасные' }, buy: 210000, extra: 5000, buyCur: 'UZS', price: 295000, cur: 'UZS', min: 4, photo: img('wiper') },
+    { code: 'SM-00015', qty: 30, name: 'Лампа галогенная Philips H4 Vision +30% 12 В 60/55 Вт', sku: '12342PRC1', alt: ['лампа h4', 'лампочка фара'], cat: 'c-misc', maker: 'Philips, Нидерланды', brand: 'Philips', unit: 'шт', attrs: { type: 'H4', spec: '12 В, 60/55 Вт' }, buy: 38000, extra: 1000, buyCur: 'UZS', price: 55000, cur: 'UZS', min: 10, photo: img('bulb') },
+  ];
+  // артикулы и фото пяти первых товаров (у людей в браузере они остались без них)
+  const OLD5 = { 'SM-00001': ['Michelin Primacy 4', '263385', 'tire-summer'], 'SM-00002': ['Hankook Kinergy Eco 2', '1013434', 'tire-summer'], 'SM-00003': ['Nokian Hakkapeliitta R5', 'T430512', 'tire-winter'],
+    'SM-00004': ['Масло моторное Shell Helix HX7', '550053737', 'oil'], 'SM-00005': ['Фильтр масляный MANN W 712/75', 'W 712/75', 'oil-filter'] };
+  const SUPPLIER = { kind: 'supplier', type: 'legal', name: 'ООО «AvtoTrade Supply»', contact: 'Шерзод Каримов', phone: '+998 71 205-44-80', address: 'г. Ташкент, Сергелийский р-н, ул. Янги Сергели, 15', inn: '307 554 219', bank: 'АКБ «Hamkorbank»', mfo: '00083', account: '2020 8000 4051 7730 2001', sellerId: '', comment: 'Шины, диски, АКБ, расходники' };
+  const MIG = '2026-10-22-products';
 
   SM.seed = function () {
     // утром события «сегодня» могли бы оказаться в будущем — тогда сжимаем их в последние ~40 минут, сохраняя порядок
@@ -41,15 +63,14 @@
       { id: 'c-oil', name: 'Масла и жидкости' }, { id: 'c-acc', name: 'Аккумуляторы' }, { id: 'c-misc', name: 'Сопутствующие товары' },
     ];
 
-    // 5 товаров на складе
-    const T = (size, season, model, index) => { const m = size.match(/(\d+)\/(\d+)\s*(R[\d.]+)/); return { size, width: m[1], profile: m[2], radius: m[3], season, model, index }; };
+    // 5 товаров на складе, 10 приходят поступлением (SM.migrate)
     db.products = [
-      { id: 'pr1', code: 'SM-00001', oldCode: '1C-004512', name: 'Michelin Primacy 4 205/55 R16 91V', alt: ['мишлен 205 55 16', 'Primacy4'], cat: 'c-t-summer', maker: 'Michelin, Франция', brand: 'Michelin', unit: 'шт', attrs: T('205/55 R16', 'Летняя', 'Primacy 4', '91V'), buy: 1080000, buyCur: 'UZS', extra: 25000, price: 1450000, cur: 'UZS', min: 4 },
-      { id: 'pr2', code: 'SM-00002', oldCode: '1C-004577', name: 'Hankook Kinergy Eco 2 195/65 R15 91H', alt: ['ханкук 195 65 15', 'шина нексия 15'], cat: 'c-t-summer', maker: 'Hankook, Корея', brand: 'Hankook', unit: 'шт', attrs: T('195/65 R15', 'Летняя', 'Kinergy Eco 2', '91H'), buy: 560000, buyCur: 'UZS', extra: 15000, price: 780000, cur: 'UZS', min: 8 },
-      { id: 'pr3', code: 'SM-00003', oldCode: '1C-005101', name: 'Nokian Hakkapeliitta R5 205/55 R16 94R', alt: ['нокиан хакка 205 55 16', 'липучка'], cat: 'c-t-winter', maker: 'Nokian Tyres, Финляндия', brand: 'Nokian', unit: 'шт', attrs: T('205/55 R16', 'Зимняя', 'Hakkapeliitta R5', '94R'), buy: 98, buyCur: 'USD', extra: 4, price: 135, cur: 'USD', min: 4 },
-      { id: 'pr4', code: 'SM-00004', oldCode: '1C-020011', name: 'Масло моторное Shell Helix HX7 10W-40, 4 л', alt: ['шелл 10w40', 'полусинтетика 4л'], cat: 'c-oil', maker: 'Shell, Нидерланды', brand: 'Shell', unit: 'кан', attrs: { volume: '4 л', type: 'Полусинтетика', spec: 'API SN/CF' }, buy: 270000, buyCur: 'UZS', extra: 6000, price: 370000, cur: 'UZS', min: 6 },
-      { id: 'pr5', code: 'SM-00005', oldCode: '1C-010211', name: 'Фильтр масляный MANN W 712/75', alt: ['масляный фильтр нексия', 'фильтр масла кобальт', 'W712/75'], cat: 'c-p-filters', maker: 'MANN-FILTER, Германия', brand: 'MANN', unit: 'шт', attrs: { oem: '96879797', fits: 'Nexia, Cobalt, Lacetti' }, buy: 52000, buyCur: 'UZS', extra: 2000, price: 78000, cur: 'UZS', min: 10 },
-    ].map((p) => Object.assign(p, { vat: 12, comment: '', active: true, createdAt: at(-40) }));
+      { id: 'pr1', code: 'SM-00001', sku: '263385', photo: 'assets/img/products/tire-summer.webp', oldCode: '1C-004512', name: 'Michelin Primacy 4 205/55 R16 91V', alt: ['мишлен 205 55 16', 'Primacy4'], cat: 'c-t-summer', maker: 'Michelin, Франция', brand: 'Michelin', unit: 'шт', attrs: T('205/55 R16', 'Летняя', 'Primacy 4', '91V'), buy: 1080000, buyCur: 'UZS', extra: 25000, price: 1450000, cur: 'UZS', min: 4 },
+      { id: 'pr2', code: 'SM-00002', sku: '1013434', photo: 'assets/img/products/tire-summer.webp', oldCode: '1C-004577', name: 'Hankook Kinergy Eco 2 195/65 R15 91H', alt: ['ханкук 195 65 15', 'шина нексия 15'], cat: 'c-t-summer', maker: 'Hankook, Корея', brand: 'Hankook', unit: 'шт', attrs: T('195/65 R15', 'Летняя', 'Kinergy Eco 2', '91H'), buy: 560000, buyCur: 'UZS', extra: 15000, price: 780000, cur: 'UZS', min: 8 },
+      { id: 'pr3', code: 'SM-00003', sku: 'T430512', photo: 'assets/img/products/tire-winter.webp', oldCode: '1C-005101', name: 'Nokian Hakkapeliitta R5 205/55 R16 94R', alt: ['нокиан хакка 205 55 16', 'липучка'], cat: 'c-t-winter', maker: 'Nokian Tyres, Финляндия', brand: 'Nokian', unit: 'шт', attrs: T('205/55 R16', 'Зимняя', 'Hakkapeliitta R5', '94R'), buy: 98, buyCur: 'USD', extra: 4, price: 135, cur: 'USD', min: 4 },
+      { id: 'pr4', code: 'SM-00004', sku: '550053737', photo: 'assets/img/products/oil.webp', oldCode: '1C-020011', name: 'Масло моторное Shell Helix HX7 10W-40, 4 л', alt: ['шелл 10w40', 'полусинтетика 4л'], cat: 'c-oil', maker: 'Shell, Нидерланды', brand: 'Shell', unit: 'кан', attrs: { volume: '4 л', type: 'Полусинтетика', spec: 'API SN/CF' }, buy: 270000, buyCur: 'UZS', extra: 6000, price: 370000, cur: 'UZS', min: 6 },
+      { id: 'pr5', code: 'SM-00005', sku: 'W 712/75', photo: 'assets/img/products/oil-filter.webp', oldCode: '1C-010211', name: 'Фильтр масляный MANN W 712/75', alt: ['масляный фильтр нексия', 'фильтр масла кобальт', 'W712/75'], cat: 'c-p-filters', maker: 'MANN-FILTER, Германия', brand: 'MANN', unit: 'шт', attrs: { oem: '96879797', fits: 'Nexia, Cobalt, Lacetti' }, buy: 52000, buyCur: 'UZS', extra: 2000, price: 78000, cur: 'UZS', min: 10 },
+    ].concat(JSON.parse(JSON.stringify(NEW10)).map(({ qty, ...p }, i) => Object.assign(p, { id: 'pr' + (i + 6), oldCode: '' }))).map((p) => Object.assign(p, { vat: 12, comment: '', active: true, createdAt: at(-40) }));
 
     /* начальные остатки: [склад, магазин] */
     const INIT = { pr1: [12, 4], pr2: [20, 8], pr3: [8, 2], pr4: [16, 6], pr5: [30, 10] };
@@ -76,6 +97,7 @@
     db.clients = [
       { id: 'c1', kind: 'client', type: 'legal', name: 'ООО «Toshkent Taxi Servis»', contact: 'Бахтиёр Назаров', phone: '+998 90 123-45-67', address: 'г. Ташкент, ул. Шота Руставели, 41', inn: '305 112 448', bank: 'АКБ «Капиталбанк»', mfo: '01088', account: '2020 8000 9051 2345 6001', sellerId: 'u-sel1', opening: 0, comment: 'Таксопарк: шины и расходники' },
       { id: 'c2', kind: 'client', type: 'person', name: 'Азиз Рахимов', contact: '', phone: '+998 93 555-12-90', address: 'г. Ташкент, Юнусабад, 14-квартал, д. 22', inn: '', bank: '', mfo: '', account: '', sellerId: 'u-sel1', opening: 0, comment: '' },
+      Object.assign({ id: 'sup1', opening: 0 }, SUPPLIER),
     ].map((c) => Object.assign(c, { createdAt: at(-60) }));
 
     db.drivers = [{ id: 'dr1', name: 'Ахмад Каримов', phone: '+998 90 311-22-33', active: true }, { id: 'dr2', name: 'Сардор Олимов', phone: '+998 93 402-55-61', active: true }];
@@ -126,22 +148,79 @@
 
     const N = (id, d, h, m, kind, title, text, href, roles, uids, readBy) => ({ id, at: at(d, h, m), kind, title, text, href, roles, uids: uids || [], readBy: readBy || [] });
     db.notes = [
-      N('n1', 0, 10, 26, 'pay', 'Оплата на подтверждение', 'СП-0002 · Азиз Рахимов · 5 800 000 сум · наличные', '#/accounting', ['accountant', 'admin']),
-      N('n2', 0, 10, 25, 'sale', 'Новая продажа СП-0002', 'Азиз Рахимов · 5 800 000 сум', '#/sales/s-2', ['admin', 'head', 'storekeeper']),
-      N('n3', -1, 15, 0, 'ship', 'Готово к отгрузке · СП-0001', 'ООО «Toshkent Taxi Servis» · доставка ДС-0001', '#/sales/s-1', ['admin', 'courier'], ['u-sel1']),
-      N('n4', -1, 14, 30, 'payok', 'Оплата подтверждена · СП-0001', 'ООО «Toshkent Taxi Servis» · 3 432 000 сум', '#/sales/s-1', ['admin'], ['u-sel1'], ['u-admin']),
+      N('n1', 0, 10, 26, 'pay', 'Оплата на подтверждение', '№ 2 · Азиз Рахимов · 5 800 000 сум · наличные', '#/accounting', ['accountant', 'admin']),
+      N('n2', 0, 10, 25, 'sale', 'Новая продажа № 2', 'Азиз Рахимов · 5 800 000 сум', '#/sales/s-2', ['admin', 'head', 'storekeeper']),
+      N('n3', -1, 15, 0, 'ship', 'Готово к отгрузке · № 1', 'ООО «Toshkent Taxi Servis» · доставка ДС-0001', '#/sales/s-1', ['admin', 'courier'], ['u-sel1']),
+      N('n4', -1, 14, 30, 'payok', 'Оплата подтверждена · № 1', 'ООО «Toshkent Taxi Servis» · 3 432 000 сум', '#/sales/s-1', ['admin'], ['u-sel1'], ['u-admin']),
     ];
     const HI = (id, d, h, m, uid, action, entity, entityId, detail) => ({ id, at: at(d, h, m), uid, uname: (db.users.find((u) => u.id === uid) || {}).name, action, entity, entityId, detail });
     db.history = [
       HI('h1', -30, 9, 0, 'u-admin', 'Ввод начальных остатков', 'stock', null, '5 товаров на 2 точках'),
       HI('h2', -2, 10, 0, 'u-buh', 'Расход', 'expense', 'e1', 'Аренда склада за месяц · $800,00'),
       HI('h3', -1, 9, 0, 'u-buh', 'Расход', 'expense', 'e2', 'Топливо для Damas · 450 000 сум'),
-      HI('h4', -1, 11, 10, 'u-sel1', 'Создана продажа', 'sale', 's-1', 'СП-0001 · проведена'),
-      HI('h5', -1, 14, 30, 'u-buh', 'Оплата подтверждена', 'payment', 'pay1', '3 432 000 сум · СП-0001'),
-      HI('h6', -1, 15, 0, 'u-sklad', 'Готово к отгрузке', 'sale', 's-1', 'СП-0001'),
+      HI('h4', -1, 11, 10, 'u-sel1', 'Создана продажа', 'sale', 's-1', '№ 1 · проведена'),
+      HI('h5', -1, 14, 30, 'u-buh', 'Оплата подтверждена', 'payment', 'pay1', '3 432 000 сум · № 1'),
+      HI('h6', -1, 15, 0, 'u-sklad', 'Готово к отгрузке', 'sale', 's-1', '№ 1'),
       HI('h7', 0, 9, 0, 'u-buh', 'Установлен курс $', 'rate', null, 'наличный 12660, безналичный 12715, перечисление 12735'),
-      HI('h8', 0, 10, 25, 'u-sel1', 'Создана продажа', 'sale', 's-2', 'СП-0002 · проведена'),
+      HI('h8', 0, 10, 25, 'u-sel1', 'Создана продажа', 'sale', 's-2', '№ 2 · проведена'),
     ];
     return db;
+  };
+
+  /* Аддитивная миграция «10 товаров + поступление» (v2026-10-22.12) — один раз на базу, отметка db.migrations[MIG].
+     Данные людей не трогает: недостающие товары добавляет по коду/названию (код занят чужим товаром — следующий свободный),
+     артикул ставит только пустому и не занятому (занят — запись в консоль), поставщика — если нет по имени,
+     поступление создаёт и проводит через SM.ops.saveReceipt, как кнопка «Провести» (остатки и «Движение товара» согласованы).
+     Поступление с r.mig === MIG уже есть — второе не создаётся. Возвращает отчёт или null, если уже сделано. */
+  SM.migrate = function () {
+    const db = SM.db;
+    if (!db || (db.migrations && db.migrations[MIG])) return null;
+    const user0 = SM.user;
+    // операции пишут автора — без входа (загрузка, страница входа) это администратор базы
+    if (!SM.user) SM.user = db.users.find((u) => u.role === 'admin' && u.active !== false) || db.users[0];
+    const rep = { added: [], sku: [], skipped: [], receipt: null };
+    // операции сохраняют после каждого шага — здесь одно сохранение в конце (первая загрузка не тормозит)
+    const save0 = SM.save; SM.save = () => {};
+    try {
+      const byName = (n) => db.products.find((p) => String(p.name).toLowerCase() === n.toLowerCase());
+      Object.entries(OLD5).forEach(([code, [name, sku, ph]]) => {
+        const p = db.products.find((x) => x.code === code && String(x.name).startsWith(name));
+        if (!p) return;
+        const patch = {};
+        if (!p.photo) patch.photo = img(ph);
+        if (!p.sku) { const o = SM.skuOwner(sku, p.id); if (o) { rep.skipped.push(code + ' артикул ' + sku); console.warn('Миграция ' + MIG + ': артикул ' + sku + ' занят товаром ' + o.code + ' — у ' + code + ' не ставлю'); } else { patch.sku = sku; rep.sku.push(code); } }
+        if (Object.keys(patch).length) SM.ops.saveProduct(Object.assign({ id: p.id, name: p.name }, patch));
+      });
+      // сначала товары со свободным кодом, потом те, чей код занят чужим товаром (им — следующий свободный)
+      const ids = {}, later = [];
+      const add = (d, code) => {
+        const { qty, sku, ...p } = JSON.parse(JSON.stringify(d));
+        const o = SM.skuOwner(sku);
+        if (o) { rep.skipped.push(d.name + ' артикул ' + sku); console.warn('Миграция ' + MIG + ': артикул ' + sku + ' занят товаром ' + o.code + ' — у «' + d.name + '» не ставлю'); }
+        const x = SM.ops.saveProduct(Object.assign({}, p, { code, sku: o ? '' : sku, oldCode: '', vat: 12, comment: '', active: true }));
+        rep.added.push(x.code); return x;
+      };
+      NEW10.forEach((d) => {
+        const own = byName(d.name);
+        if (own) { ids[d.code] = own.id; if (!own.sku && !SM.skuOwner(d.sku, own.id)) { SM.ops.saveProduct({ id: own.id, name: own.name, sku: d.sku }); rep.sku.push(own.code); } return; }
+        if (db.products.some((p) => p.code === d.code)) later.push(d); else ids[d.code] = add(d, d.code).id;
+      });
+      later.forEach((d) => (ids[d.code] = add(d, SM.nextProductCode()).id));
+      let sup = db.clients.find((c) => String(c.name).toLowerCase() === SUPPLIER.name.toLowerCase());
+      if (!sup) sup = SM.ops.saveClient(Object.assign({}, SUPPLIER));
+      if (!db.receipts.some((r) => r.mig === MIG)) {
+        const w = db.points.find((p) => p.id === 'w1') || db.points.find((p) => p.type === 'warehouse') || db.points[0];
+        const rate = SM.rate('bank');
+        // строки — как при подборе в окне «Новое поступление»: цены переводятся в валюту поступления (сум)
+        const k = (v, c) => Math.round(SM.conv(v, c || 'UZS', 'UZS', rate) * 100) / 100;
+        const items = NEW10.map((d) => { const p = SM.product(ids[d.code]); return { productId: p.id, qty: d.qty, buy: k(p.buy, p.buyCur), extra: k(p.extra || 0, p.buyCur), price: k(p.price, p.cur) }; });
+        const r = SM.ops.saveReceipt({ date: D.todayISO(), supplierId: sup.id, pointId: w.id, cur: 'UZS', rate, vat: false, items, comment: 'Оприходование новых товаров' }, true);
+        r.mig = MIG; rep.receipt = r.no;
+      }
+      db.migrations = Object.assign({}, db.migrations, { [MIG]: new Date().toISOString() });
+    } finally { SM.save = save0; SM.user = user0; }
+    SM.lowWatch(true); // оприходование при первой загрузке — без пачки уведомлений
+    SM.save();
+    return rep;
   };
 })();

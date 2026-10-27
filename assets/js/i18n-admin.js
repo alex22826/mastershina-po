@@ -1,8 +1,8 @@
 /* ===== Перевод админки: RU → UZ (латиница) и ЎЗ (узбекская кириллица) =====
    Страницы пишутся по-русски; переводчик следит за DOM (MutationObserver) и подменяет текст
-   и атрибуты placeholder / title / aria-label / data-tip по словарю SM_UZ (lang-uz.js).
+   и атрибуты placeholder / title / aria-label / data-tip / data-label / data-why по словарю SM_UZ (lang-uz.js).
    Кириллица получается транслитерацией узбекской латиницы. Не трогаем поля ввода,
-   превью документов и всё, что помечено translate="no". */
+   превью документов и всё, что помечено translate="no". Из данных переводятся только имена сотрудников. */
 (function () {
   const SM = (window.SM = window.SM || {});
   const UZ = window.SM_UZ || {};
@@ -13,7 +13,8 @@
   const EDGE = /^([\s\d.,:;%$№#()«»"'+\-−–—/!?…*•·≈]*)([\s\S]*?)([\s\d.,:;%$()«»"'+\-−–—/!?…*•·≈]*)$/;
   const SEPS = ['\n', ' · ', ' — ', ' – ', ' → ', '. ', ': ', ', ', ' / ', ' ('];
   const SKIP = 'script,style,textarea,code,pre,.doc-preview,[translate="no"],[contenteditable="true"]';
-  const ATTRS = ['placeholder', 'title', 'aria-label', 'data-tip'];
+  // data-label и data-why выводит CSS (подписи в карточках на телефоне, причина запрета на доске)
+  const ATTRS = ['placeholder', 'title', 'aria-label', 'data-tip', 'data-label', 'data-why'];
   // латинские слова, которые остаются латиницей и в кириллице
   const KEEP = ['Excel', 'Word', 'PDF', 'QR', 'CSV', 'GPS', 'OEM', 'PCD', 'ET', 'UZS', 'USD', 'SM', 'AVTO', 'BASE', 'Click', 'Payme', 'Uzum', 'Telegram', 'UI'];
   let lang = 'ru';
@@ -99,11 +100,51 @@
     });
   }
 
+  /* ---------- Имена сотрудников (пользователи и водители): русская кириллица → узбекская латиница ---------- */
+  // Остальные данные (клиенты, товары, адреса) не переводятся. Для ЎЗ латиница дальше идёт через toCyr.
+  const LET = 'А-Яа-яЁёЎўҚқҒғҲҳ';
+  const RU_LAT = { а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'yo', ж: 'j', з: 'z', и: 'i', й: 'y', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'x', ц: 'ts', ч: 'ch', ш: 'sh', щ: 'sh', ъ: "'", ы: 'i', ь: '', э: 'e', ю: 'yu', я: 'ya', ў: "o'", қ: 'q', ғ: "g'", ҳ: 'h' };
+  // русская «Х» в узбекских именах бывает и X, и H (Ҳ): в начале — X, кроме этих основ; внутри — H, кроме «хт» (Baxtiyor)
+  const H_START = /^х(аким|асан|усан|усей|усн|амид|амза|абиб|алил|айдар|афиз|амро|олид|илол)/;
+  function latWord(w) {
+    const low = w.toLowerCase();
+    let r = '';
+    for (let i = 0; i < low.length; i++) {
+      const c = low[i], prev = low[i - 1];
+      if (c === 'е') r += i === 0 || 'аеёиоуыэюяўъь'.indexOf(prev) >= 0 ? 'ye' : 'e';
+      else if (c === 'х') r += i === 0 ? (H_START.test(low) ? 'h' : 'x') : low[i + 1] === 'т' ? 'x' : 'h';
+      else r += RU_LAT[c] != null ? RU_LAT[c] : c;
+    }
+    return w.charAt(0) !== low.charAt(0) ? up1(r) : r;
+  }
+  let staffKey = null, staffMap = null, staffRe = null;
+  // слова из имён сотрудников (с заглавной буквы) → латиница; пересобираем, когда имена поменялись
+  function staffSync() {
+    const db = SM.db;
+    const list = db ? [].concat(db.users || [], db.drivers || []).map((u) => u && u.name).filter(Boolean) : [];
+    const key = list.join('|');
+    if (key === staffKey) return;
+    staffKey = key; staffMap = new Map(); cache.clear();
+    const word = new RegExp('^[А-ЯЁЎҚҒҲ][' + LET + '-]+$');
+    list.forEach((n) => n.split(/\s+/).forEach((w) => { w = w.replace(/[«»".,()]/g, ''); if (word.test(w)) staffMap.set(w, latWord(w)); }));
+    const keys = [...staffMap.keys()].sort((a, b) => b.length - a.length);
+    staffRe = keys.length ? new RegExp('(^|[^' + LET + '])(' + keys.join('|') + ')(?![' + LET + '])', 'g') : null;
+  }
+  const staffLat = (s) => (staffRe ? s.replace(staffRe, (m, a, w) => a + staffMap.get(w)) : s);
+  // имя для текущего языка (нужно там, где из имени делают инициалы)
+  function staff(s) {
+    if (lang === 'ru' || !s || !CYR.test(s)) return s;
+    staffSync();
+    const out = staffLat(s);
+    return out !== s && lang === 'uzc' ? toCyr(out, s) : out;
+  }
+
   function tr(s) {
     if (lang === 'ru' || !s || !CYR.test(s)) return s;
+    staffSync();
     if (cache.has(s)) return cache.get(s);
     const m = s.match(/^(\s*)([\s\S]*?)(\s*)$/);
-    let out = core(m[2]);
+    let out = staffLat(core(m[2]));
     if (out !== m[2] && lang === 'uzc') out = toCyr(out, m[2]);
     out = m[1] + out + m[3];
     cache.set(s, out);
@@ -154,6 +195,7 @@
       if (lang !== 'ru' && document.body) walk(document.body);
     },
     tr,
+    staff,
     lang: () => lang,
   };
   obs.observe(document.documentElement, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ATTRS });

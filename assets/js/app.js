@@ -9,8 +9,9 @@
   const I = UI.icon;
   SM.pages = {};
   SM.page = (key, def) => (SM.pages[key] = def);
-  // версия сборки: когда на сайте выкладывают новую, version.json отличается — показываем плашку «обновите страницу»
-  SM.APP_VERSION = '2026-10-16.6';
+  // версия сборки — из <meta name="app-version"> в admin.html (html не кэшируется, js — до 4 ч).
+  // Когда на сайте выкладывают новую, version.json отличается — показываем плашку «обновите страницу»
+  SM.APP_VERSION = (document.querySelector('meta[name=app-version]') || {}).content || '';
 
   /* ---------- Тема: светлая 8:00–18:00, тёмная 18:00–8:00; вручную — до следующего переключения ---------- */
   const OVR = 'sm.themeOverride';
@@ -18,7 +19,6 @@
   SM.themeAuto = (d = new Date()) => (d.getHours() >= 8 && d.getHours() < 18 ? 'light' : 'dark');
   SM.nextThemeSwitch = (d = new Date()) => { const t = new Date(d), h = d.getHours(); if (h < 8) t.setHours(8, 0, 0, 0); else if (h < 18) t.setHours(18, 0, 0, 0); else { t.setDate(t.getDate() + 1); t.setHours(8, 0, 0, 0); } return t.getTime(); };
   SM.themeWanted = () => { try { const o = JSON.parse(localStorage.getItem(OVR) || 'null'); if (o && o.until > Date.now()) return o.theme; } catch (e) { /* без хранилища — по времени */ } return SM.themeAuto(); };
-  SM.themeTip = () => (SM.theme() === 'dark' ? 'Тёмная тема' : 'Светлая тема') + (SM.theme() === SM.themeAuto() ? ' · по времени' : ' · вручную до ' + (SM.themeAuto() === 'light' ? '18:00' : '8:00')) + '\nСама: светлая с 8:00, тёмная с 18:00';
   // возвращает промис, который завершается, когда «волна» докатилась
   let switching = 0;
   SM.applyTheme = function (t, origin) {
@@ -27,7 +27,7 @@
     const flip = () => {
       root.setAttribute('data-theme', t);
       document.querySelectorAll('meta[name=theme-color]').forEach((m) => m.setAttribute('content', t === 'dark' ? '#0b0c0f' : '#f2f3f7'));
-      document.querySelectorAll('[data-act=theme]').forEach((b) => { b.innerHTML = String(I(t === 'dark' ? 'sun' : 'moon')); b.setAttribute('data-tip', SM.themeTip()); });
+      document.querySelectorAll('[data-act=theme]').forEach((b) => { b.innerHTML = String(I(t === 'dark' ? 'sun' : 'moon')); });
     };
     const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (document.startViewTransition && !reduce) {
@@ -47,8 +47,8 @@
   SM.toggleTheme = function (origin) {
     const t = SM.theme() === 'dark' ? 'light' : 'dark';
     try { if (t === SM.themeAuto()) localStorage.removeItem(OVR); else localStorage.setItem(OVR, JSON.stringify({ theme: t, until: SM.nextThemeSwitch() })); } catch (e) { /* без хранилища */ }
-    // сообщение — после «волны», чтобы его анимация не мешала кругу
-    SM.applyTheme(t, origin).then(() => UI.toast(t === 'dark' ? 'Тёмная тема' : 'Светлая тема', t === SM.themeAuto() ? 'Как положено по времени' : 'До ' + (t === 'dark' ? '8:00' : '18:00') + ', потом — снова по времени', 'info', { icon: t === 'dark' ? 'moon' : 'sun', ms: 2600 }));
+    // без тоста и подсказки: смена темы видна сама
+    SM.applyTheme(t, origin);
   };
   SM.startThemeClock = () => setInterval(() => { const w = SM.themeWanted(); if (w !== SM.theme()) SM.applyTheme(w); }, 30000);
 
@@ -92,7 +92,7 @@
       const r = await fetch('version.json?_=' + Date.now(), { cache: 'no-store' });
       if (!r.ok) return;
       const v = (await r.json()).v;
-      if (v && v !== SM.APP_VERSION) showUpdate();
+      if (v && SM.APP_VERSION && v !== SM.APP_VERSION) showUpdate();
     } catch (e) { /* нет сети — проверим позже */ }
   };
   function showUpdate() {
@@ -161,7 +161,7 @@
     const u = SM.user;
     const groups = [];
     SM.SECTIONS.forEach((s) => {
-      if (!SM.can(s.key)) return;
+      if (s.tabOf || !SM.canNav(s.key)) return;
       let g = groups.find((x) => x.name === s.group);
       if (!g) groups.push((g = { name: s.group, items: [] }));
       g.items.push(s);
@@ -171,12 +171,13 @@
     UI.$('#sidebar').innerHTML = String(html`<div class="sb-in">
       <a class="sb-brand" href="#/${SM.homeKey()}" aria-label="SM AVTO BASE">${UI.logoMark()}<span class="sb-fade"><b>SM <em>AVTO BASE</em></b><small>Учётная система</small></span></a>
       <nav class="sb-nav">${groups.map((g) => html`<div class="sb-group"><span class="sb-fade">${g.name}</span>${g.items.map((s) => html`
-        <a class="sb-link ${active === s.key ? 'active' : ''}" href="#/${s.key}" data-tip="${s.title}" data-tip-pos="right" data-tip-rail="1" ${active === s.key ? raw('aria-current="page"') : ''}><span class="tile">${I(s.icon)}</span><span class="sb-fade">${s.title}</span>${cnt[s.key] ? html`<span class="sb-count ${cnt[s.key].bad ? 'bad' : ''}">${SM.capCount(cnt[s.key].n)}</span>` : ''}</a>`)}</div>`)}</nav>
+        <a class="sb-link ${active === s.key ? 'active' : ''}" href="#/${s.key}" data-tip="${s.menu || s.title}" data-tip-pos="right" data-tip-rail="1" ${active === s.key ? raw('aria-current="page"') : ''}><span class="tile">${I(s.icon)}</span><span class="sb-fade">${s.menu || s.title}</span>${cnt[s.key] ? html`<span class="sb-count ${cnt[s.key].bad ? 'bad' : ''}">${SM.capCount(cnt[s.key].n)}</span>` : ''}</a>`)}</div>`)}</nav>
       <div class="sb-user">${UI.avatar(u.name, u.id)}<div class="who sb-fade"><b>${u.name}</b><small>${SM.roleOf(u).title}</small></div><button class="btn btn-icon btn-sm sb-fade" data-act="logout" data-tip="Выйти" aria-label="Выйти">${I('logout')}</button></div></div>`);
     const nav = UI.$('#sidebar .sb-nav');
     nav.scrollTop = keep;
+    // меню прокручиваем только по вертикали: scrollIntoView сдвигал и рельс вбок
     const act = nav.querySelector('.sb-link.active');
-    if (act) { const a = act.getBoundingClientRect(), n = nav.getBoundingClientRect(); if (a.top < n.top || a.bottom > n.bottom) act.scrollIntoView({ block: 'nearest' }); }
+    if (act) { const a = act.getBoundingClientRect(), n = nav.getBoundingClientRect(); if (a.top < n.top) nav.scrollTop += a.top - n.top; else if (a.bottom > n.bottom) nav.scrollTop += a.bottom - n.bottom; }
   }
 
   function topbar(sec, title) {
@@ -190,17 +191,19 @@
       <button class="tb-btn" data-act="search" data-tip="Поиск: товар, клиент, № продажи (клавиша /)" aria-label="Поиск">${I('search')}</button>
       <button class="tb-btn tb-rate" data-act="rate" data-tip="${'Курс $ на ' + F.dt(r.at) + '\nналичный ' + F.num(r.cash) + ' · безналичный ' + F.num(r.card) + ' · перечисление ' + F.num(r.bank)}"><i class="live"></i><span class="rc-l">$</span><b>${F.num(r.cash)}</b></button>
       <button class="tb-btn tb-lang" data-act="lang" aria-label="Язык" data-tip="Язык интерфейса" translate="no">${I('globe')}<span class="lc">${lang[1]}</span></button>
-      <button class="tb-btn theme-btn" data-act="theme" data-tip="${SM.themeTip()}" aria-label="Сменить тему">${I(SM.theme() === 'dark' ? 'sun' : 'moon')}</button>
+      <button class="tb-btn theme-btn" data-act="theme" aria-label="Сменить тему">${I(SM.theme() === 'dark' ? 'sun' : 'moon')}</button>
       <button class="tb-btn bell" data-act="alerts" data-tip="Уведомления" aria-label="Уведомления${un ? ': ' + un : ''}">${I('bell')}${un ? html`<span class="bell-n">${SM.capCount(un)}</span>` : ''}</button>
       ${SM.can('sales', 2) ? html`<a class="btn btn-primary btn-sm tb-new" href="#/sales/new">${I('plus')}Продажа</a>` : ''}`);
   }
 
   /* ---------- Нижняя навигация на телефоне ---------- */
-  const BNAV = { admin: ['dashboard', 'sales', 'products', 'cash'], head: ['dashboard', 'sales', 'debts', 'reports'], seller: ['dashboard', 'sales', 'products', 'clients'],
-    storekeeper: ['dashboard', 'stock', 'receipts', 'sales'], accountant: ['dashboard', 'accounting', 'cash', 'debts'], courier: ['dashboard', 'delivery', 'notifications'] };
+  const BNAV = { admin: ['dashboard', 'sales', 'products', 'cash'], head: ['dashboard', 'sales', 'debts', 'accounting'], seller: ['dashboard', 'sales', 'products', 'clients'],
+    storekeeper: ['dashboard', 'stock', 'sales', 'delivery'], accountant: ['dashboard', 'accounting', 'cash', 'debts'], courier: ['dashboard', 'delivery', 'notifications'] };
   function bnav(active, cnt) {
-    const pref = (BNAV[SM.user.role] || []).filter((k) => SM.can(k));
-    const items = pref.concat(SM.SECTIONS.map((s) => s.key).filter((k) => SM.can(k) && !pref.includes(k))).slice(0, 4);
+    const pref = (BNAV[SM.user.role] || []).filter((k) => SM.canNav(k));
+    const items = pref.concat(SM.SECTIONS.filter((s) => !s.tabOf).map((s) => s.key).filter((k) => SM.canNav(k) && !pref.includes(k))).slice(0, 4);
+    // колонок столько, сколько кнопок (разделы + «Меню»): у роли с 2–3 разделами панель не пустеет справа
+    UI.$('#bnav').style.setProperty('--n', items.length + 1);
     UI.$('#bnav').innerHTML = String(html`${items.map((k) => { const s = SM.section(k); return html`<a href="#/${k}" class="${k === active ? 'on' : ''}">${I(s.icon)}<span>${s.short}</span>${cnt[k] ? html`<span class="cnt">${SM.capCount(cnt[k].n)}</span>` : ''}</a>`; })}<button type="button" data-act="nav-open" class="${items.includes(active) ? '' : 'on'}">${I('menu')}<span>Меню</span></button>`);
   }
 
@@ -211,28 +214,38 @@
     const r = SM.route();
     let key = r.key;
     if (!key || !SM.pages[key] || !SM.section(key)) key = SM.homeKey();
-    const sec = SM.section(key);
+    // родитель без своего доступа открывает первую доступную вкладку
+    if (!SM.can(key) && !SM.section(key).tabOf) { const t = SM.tabsOf(key).find((k) => SM.can(k)); if (t) { history.replaceState(null, '', '#/' + t); key = t; r.key = t; r.id = null; r.q = {}; } }
+    const own = SM.section(key);
+    const host = own.tabOf || key;
+    const sec = SM.section(host);
+    const tabs = SM.tabsOf(host).filter((k) => SM.can(k));
     const page = SM.pages[key];
     const cnt = counts();
-    sidebar(key, cnt);
-    bnav(key, cnt);
+    sidebar(host, cnt);
+    bnav(host, cnt);
     const view = UI.$('#view');
     const changed = key !== lastKey;
     lastKey = key;
     if (changed) routeBar();
     if (!SM.can(key)) {
-      topbar(sec, sec ? sec.title : '');
-      view.innerHTML = String(html`<div class="page enter"><div class="locked"><div><div class="ic">${I('lock')}</div><h2>Нет доступа к разделу</h2><p>Права на раздел «${sec ? sec.title : key}» выдаёт администратор в разделе «Пользователи и роли».</p><a class="btn btn-primary mt-16" href="#/${SM.homeKey()}">${I('arrowLeft')}На главную</a></div></div></div>`);
+      topbar(sec, sec ? SM.navTitle(host) : '');
+      view.innerHTML = String(html`<div class="page enter"><div class="locked"><div><div class="ic">${I('lock')}</div><h2>Нет доступа к разделу</h2><p>Права на раздел «${own.title}» выдаёт администратор в разделе «Пользователи и роли».</p><a class="btn btn-primary mt-16" href="#/${SM.homeKey()}">${I('arrowLeft')}На главную</a></div></div></div>`);
       return;
     }
-    const title = typeof page.title === 'function' ? page.title(r) : page.title || (sec && sec.title);
+    // у раздела с вкладками-разделами заголовок — родителя
+    const multi = SM.tabsOf(host).length > 1;
+    const title = multi ? SM.navTitle(host) : typeof page.title === 'function' ? page.title(r) : page.title || (sec && sec.title);
     topbar(sec, title);
+    // разделы-вкладки — отдельным рядом сверху; свои вкладки страницы (?tab=) не трогаем
+    const secTabs = multi ? UI.tabs(tabs.map((k) => [k, SM.section(k).title]), key, 'sec') : '';
     // при переходе в раздел — поочерёдное появление блоков; при фильтрах — без анимации
-    view.innerHTML = String(html`<div class="page ${changed && !quiet ? 'enter' : ''}">${page.render(r)}</div>`);
+    view.innerHTML = String(html`<div class="page ${changed && !quiet ? 'enter' : ''}">${secTabs}${page.render(r)}</div>`);
     const pg = view.firstElementChild;
     UI.stagger(pg);
     UI.enhance(view);
     if (page.mount) page.mount(pg, r);
+    UI.$$('[data-param=sec]', pg).forEach((b) => (b.onclick = () => SM.go('#/' + b.dataset.tab)));
     UI.drawCharts(view, changed && !quiet);
     if (changed && !quiet) UI.countUp(view);
     document.title = (SM.i18n ? SM.i18n.tr(title) : title) + ' · SM AVTO BASE';
@@ -276,14 +289,14 @@
     if (s.length < 2) return { products: [], clients: [], sales: [] };
     const words = s.split(/\s+/);
     const hit = (text) => { const t = text.toLowerCase(); return words.every((w) => t.includes(w)); };
-    const products = SM.can('products') || SM.can('stock') ? SM.db.products.filter((p) => hit([p.code, p.oldCode, p.name, (p.alt || []).join(' '), p.brand, p.maker, SM.category(p.cat).name, Object.values(p.attrs || {}).join(' ')].join(' '))).slice(0, 8) : [];
+    const products = SM.can('products') || SM.can('stock') ? SM.db.products.filter((p) => hit(SM.productHay(p))).slice(0, 8) : [];
     const clients = SM.can('clients') || SM.can('debts') ? SM.db.clients.filter((c) => hit([c.name, c.contact, c.phone, String(c.phone).replace(/\D/g, ''), c.inn, String(c.inn).replace(/\D/g, '')].join(' '))).slice(0, 6) : [];
-    const sales = SM.can('sales') ? SM.db.sales.filter((x) => SM.saleVisible(x) && hit(x.no + ' ' + x.no.replace(/\D/g, '') + ' ' + SM.client(x.clientId).name)).slice(0, 6) : [];
+    const sales = SM.can('sales') ? SM.db.sales.filter((x) => SM.saleVisible(x) && hit(SM.saleHay(x) + ' ' + SM.client(x.clientId).name)).slice(0, 6) : [];
     return { products, clients, sales };
   };
   function searchModal(initial) {
     const m = UI.modal({ title: 'Поиск по системе', sub: 'Код, название или альтернативное название товара · клиент, телефон, ИНН · номер продажи',
-      body: html`<div class="input-icon">${I('search')}<input class="input input-lg" id="msearch" placeholder="Например: 205/55 R16, колодки нексия, СП-0002" autocomplete="off" enterkeyhint="search" autofocus></div><div id="msres" class="mt-12"></div>` });
+      body: html`<div class="input-icon">${I('search')}<input class="input input-lg" id="msearch" placeholder="Например: 205/55 R16, колодки нексия, № 2" autocomplete="off" enterkeyhint="search" autofocus></div><div id="msres" class="mt-12"></div>` });
     const inp = m.querySelector('#msearch');
     const box = m.querySelector('#msres');
     const draw = () => {
@@ -291,8 +304,8 @@
       const none = !r.products.length && !r.clients.length && !r.sales.length;
       box.innerHTML = String(inp.value.trim().length < 2 ? html`<p class="muted fs-13">Введите хотя бы 2 символа — ищем по части слова или номера.</p>` : none ? UI.empty('Ничего не найдено', 'Попробуйте другое написание', 'search') : html`
         ${r.products.length ? html`<div class="section-t">Товары</div><ul class="list">${r.products.map((p) => html`<li class="click" data-act="open-product" data-id="${p.id}">${UI.thumb(p)}<div class="grow"><b class="fs-13">${p.name}</b><div class="fs-12 muted">${p.code} · ${SM.category(p.cat).name}</div></div><span class="fw-8 num ${SM.available(p.id) <= 0 ? 'bad-t' : ''}">${SM.available(p.id)} ${p.unit}</span></li>`)}</ul>` : ''}
-        ${r.clients.length ? html`<div class="section-t">Клиенты и контрагенты</div><ul class="list">${r.clients.map((c) => html`<li class="click" data-act="open-client" data-id="${c.id}">${UI.avatar(c.name, c.id, 'sm')}<div class="grow"><b class="fs-13">${c.name}</b><div class="fs-12 muted">${c.phone}${c.inn ? ' · ИНН ' + c.inn : ''}</div></div></li>`)}</ul>` : ''}
-        ${r.sales.length ? html`<div class="section-t">Продажи</div><ul class="list">${r.sales.map((s) => html`<li class="click" data-act="open-sale" data-id="${s.id}"><span class="note-ic accent">${I('cart')}</span><div class="grow"><b class="fs-13">${s.no} · ${SM.client(s.clientId).name}</b><div class="fs-12 muted">${F.date(s.date)} · ${F.cur(SM.saleCalc(s).total, s.cur)}</div></div>${UI.badge(SM.SALE_STATUS[SM.saleStatus(s)])}</li>`)}</ul>` : ''}`);
+        ${r.clients.length ? html`<div class="section-t">Контрагенты</div><ul class="list">${r.clients.map((c) => html`<li class="click" data-act="open-client" data-id="${c.id}">${UI.avatar(c.name, c.id, 'sm')}<div class="grow"><b class="fs-13">${c.name}</b><div class="fs-12 muted">${c.phone}${c.inn ? ' · ИНН ' + c.inn : ''}</div></div></li>`)}</ul>` : ''}
+        ${r.sales.length ? html`<div class="section-t">Продажи</div><ul class="list">${r.sales.map((s) => html`<li class="click" data-act="open-sale" data-id="${s.id}"><span class="note-ic accent">${I('cart')}</span><div class="grow"><b class="fs-13">${SM.saleNo(s)} · ${SM.client(s.clientId).name}</b><div class="fs-12 muted">${F.date(s.date)} · ${F.cur(SM.saleCalc(s).total, s.cur)}</div></div>${UI.badge(SM.SALE_STATUS[SM.saleStatus(s)])}</li>`)}</ul>` : ''}`);
     };
     inp.value = initial || '';
     inp.addEventListener('input', draw);
@@ -338,8 +351,8 @@
       if (e.key === 'Escape') document.body.classList.remove('nav-open');
     });
     addEventListener('hashchange', () => { UI.closeAll(); UI.closeSelect(); document.body.classList.remove('nav-open'); SM._drawer = null; SM.render(); window.scrollTo(0, 0); });
-    // данные поменяли в другой вкладке — перечитываем
-    addEventListener('storage', (e) => { if (e.key === SM.DB_KEY && e.newValue) { SM.load(); SM.user = SM.currentUser(); if (!SM.user) location.replace('index.html'); else SM.refresh(); } });
+    // данные поменяли в другой вкладке — перечитываем (с сервером каждая вкладка синхронизируется сама)
+    addEventListener('storage', (e) => { if (!SM.server && e.key === SM.DB_KEY && e.newValue) { SM.load(); SM.user = SM.currentUser(); if (!SM.user) location.replace('index.html'); else SM.refresh(); } });
     document.addEventListener('visibilitychange', () => { if (!document.hidden) { SM.checkUpdate(); const w = SM.themeWanted(); if (w !== SM.theme()) SM.applyTheme(w); } });
   }
 
@@ -349,12 +362,57 @@
   UI.bindTabs = (el) => UI.$$('[data-tab]', el).forEach((b) => (b.onclick = () => SM.setQuery({ [b.dataset.param]: b.dataset.tab }, true)));
   SM.PERIODS = [['day', 'Сегодня'], ['week', '7 дней'], ['month', '30 дней'], ['all', 'Всё время']];
   UI.periodSeg = (val, opts = SM.PERIODS) => html`<div class="seg" role="group" aria-label="Период">${opts.map(([k, t]) => html`<button class="${val === k ? 'on' : ''}" data-period="${k}">${t}</button>`)}</div>`;
+  /* Выпадающее меню у кнопки (вид .menu-pop): fill(p, close) наполняет меню; закрытие — клик вне, Esc, close().
+     Календарь дат рисуется в body (.dp-pop, .dp-ov) — клики в нём меню не закрывают. */
+  UI.dropMenu = (btn, fill) => {
+    const old = UI.$('.menu-pop');
+    if (old && old._close) { old._close(); if (old._btn === btn) return null; }
+    const p = document.createElement('div');
+    p.className = 'menu-pop'; p.setAttribute('role', 'menu'); p._btn = btn;
+    const place = () => { const r = btn.getBoundingClientRect(); p.style.top = r.bottom + 8 + 'px'; p.style.left = Math.max(8, Math.min(r.right - p.offsetWidth, innerWidth - p.offsetWidth - 8)) + 'px'; };
+    const out = (e) => { if (!p.contains(e.target) && !btn.contains(e.target) && !e.target.closest('.dp-pop, .dp-ov')) close(); };
+    const esc = (e) => { if (e.key === 'Escape' && !UI.$('.dp-pop')) { close(); if (btn.isConnected) btn.focus(); } };
+    function close() { p.remove(); btn.setAttribute('aria-expanded', 'false'); document.removeEventListener('mousedown', out); document.removeEventListener('keydown', esc); }
+    p._close = close; p._place = place;
+    fill(p, close);
+    document.body.appendChild(p); place();
+    btn.setAttribute('aria-expanded', 'true');
+    setTimeout(() => { if (p.isConnected) { document.addEventListener('mousedown', out); document.addEventListener('keydown', esc); } }, 0);
+    return p;
+  };
+  /* Период кнопкой-выпадашкой: R — { p, from, to, label } (свои даты на кнопке — «13.10 — 19.10») */
+  UI.periodDrop = (R, opts = SM.PERIODS) => { const yr = R.from && R.to && (R.from.slice(0, 4) !== R.to.slice(0, 4) || R.to.slice(0, 4) !== SM.d.todayISO().slice(0, 4)), dm = (d) => d.slice(8, 10) + '.' + d.slice(5, 7) + (yr ? '.' + d.slice(2, 4) : ''), o = opts.find(([k]) => k === R.p); return html`<button type="button" class="btn btn-secondary period-dd" data-x="period-dd" aria-haspopup="menu" aria-expanded="false" title="Период">${I('calendar')}<span class="pd-l">${R.p === 'custom' ? dm(R.from) + ' — ' + dm(R.to) : o ? o[1] : ''}</span>${I('chevronDown', 'pd-chev')}</button>`; };
+  UI.bindPeriodDrop = (el, R, opts = SM.PERIODS) => {
+    const btn = UI.$('[data-x=period-dd]', el);
+    if (!btn) return;
+    const max = SM.d.todayISO();
+    btn.onclick = () => UI.dropMenu(btn, (p, close) => {
+      p.classList.add('period-pop');
+      p.innerHTML = String(html`${opts.map(([k, t]) => html`<button type="button" role="menuitemradio" aria-checked="${R.p === k}" class="${R.p === k ? 'on' : ''}" data-pk="${k}"><span>${t}</span>${I('check', 'ck')}</button>`)}<div class="pd-custom" hidden><label><span>с</span><input class="input input-sm" type="date" data-pd="from" value="${R.from || SM.d.iso(SM.d.addDays(max, -6))}" max="${max}" aria-label="Период с"></label><label><span>по</span><input class="input input-sm" type="date" data-pd="to" value="${R.to || max}" max="${max}" aria-label="по"></label><button type="button" class="btn btn-primary btn-sm" data-x="pd-apply">Применить</button></div>`);
+      const box = UI.$('.pd-custom', p);
+      if (R.p === 'custom') box.hidden = false;
+      p.addEventListener('click', (e) => {
+        const b = e.target.closest('[data-pk]');
+        if (b) {
+          if (b.dataset.pk !== 'custom') { close(); SM.setQuery({ p: b.dataset.pk, from: '', to: '' }, true); return; }
+          UI.$$('[data-pk]', p).forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-checked', x === b); });
+          box.hidden = false; p._place(); return;
+        }
+        if (e.target.closest('[data-x=pd-apply]')) {
+          const f = UI.$('[data-pd=from]', p).value, t = UI.$('[data-pd=to]', p).value;
+          if (!f || !t) { UI.toast('Укажите даты', '', 'info'); return; }
+          close(); SM.setQuery({ p: 'custom', from: f, to: t }, true);
+        }
+      });
+    });
+  };
   UI.bindPeriod = (el, param = 'p') => UI.$$('[data-period]', el).forEach((b) => (b.onclick = () => SM.setQuery({ [param]: b.dataset.period }, true)));
   SM.periodRange = (p) => {
     const t = SM.d.todayISO();
-    const days = { day: 0, week: 6, month: 29 }[p];
+    if (p === 'yesterday') { const y = SM.d.iso(SM.d.addDays(t, -1)); return { from: y, to: y, days: 1, label: 'вчера' }; }
+    const days = { day: 0, week: 6, month: 29, year: 364 }[p];
     if (days == null) return { from: null, to: null, days: null, label: 'всё время' };
-    return { from: SM.d.iso(SM.d.addDays(t, -days)), to: t, days: days + 1, label: { day: 'сегодня', week: '7 дней', month: '30 дней' }[p] };
+    return { from: SM.d.iso(SM.d.addDays(t, -days)), to: t, days: days + 1, label: { day: 'сегодня', week: '7 дней', month: '30 дней', year: 'год' }[p] };
   };
   SM.dayLabels = (n) => { const out = []; for (let i = n - 1; i >= 0; i--) out.push(SM.d.iso(SM.d.addDays(SM.d.todayISO(), -i))); return out; };
   /* поиск над таблицей: ввод с задержкой, без потери фокуса */
@@ -370,7 +428,13 @@
   /* ---------- Запуск ---------- */
   SM.boot = function () {
     document.documentElement.setAttribute('data-theme', SM.themeWanted());
-    SM.load();
+    SM.ready.then(async (server) => {
+      if (server) { if (!(await SM.sync.start())) return; } else SM.load();
+      start();
+      if (server) SM.sync.run();
+    });
+  };
+  function start() {
     SM.user = SM.currentUser();
     if (!SM.user) { location.replace('index.html'); return; }
     shell();

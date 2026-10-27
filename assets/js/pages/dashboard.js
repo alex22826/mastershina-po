@@ -15,25 +15,47 @@
   SM.payables = () => SM.db.clients.reduce((a, c) => { const b = SM.balance(c.id); return b < 0 ? a - b : a; }, 0);
   const COLORS = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)', 'var(--s5)', 'var(--s6)'];
 
-  function salesChart(days, filter) {
-    const labels = SM.dayLabels(days);
-    const vals = labels.map((d) => SM.sumUZS(SM.salesIn(d, d, filter)));
-    return UI.chart({ type: 'bar', height: 230, labels: labels.map((d) => F.dm(d)), tipLabels: labels.map((d) => F.date(d)), series: [{ name: 'Продажи', color: '#e0365e', values: vals }], tipFmt: (v) => F.cur(v) });
+  /* график за выбранный период: до 2 месяцев — по дням (не меньше 14 дней), длиннее — по месяцам */
+  function periodChart(R) {
+    const sales = SM.salesIn(R.from, R.to);
+    const from = R.from || sales.reduce((m, s) => (D.dayOf(s.date) < m ? D.dayOf(s.date) : m), today());
+    const to = R.to || today();
+    const span = D.diffDays(to, from) + 1;
+    if (span <= 62) {
+      const days = []; for (let i = Math.max(span, 14) - 1; i >= 0; i--) days.push(D.iso(D.addDays(to, -i)));
+      const vals = days.map((d) => SM.sumUZS(SM.salesIn(d, d)));
+      return { title: 'Продажи по дням', body: UI.chart({ type: 'bar', height: 230, labels: days.map((d) => F.dm(d)), tipLabels: days.map((d) => F.date(d)), series: [{ name: 'Продажи', color: '#e0365e', values: vals }], tipFmt: (v) => F.cur(v) }) };
+    }
+    const months = [], f = D.parse(from), t = D.parse(to);
+    for (let y = f.getFullYear(), m = f.getMonth(); y < t.getFullYear() || (y === t.getFullYear() && m <= t.getMonth()); m === 11 ? (y++, m = 0) : m++) months.push([y, m]);
+    const key = (y, m) => y + '-' + String(m + 1).padStart(2, '0');
+    const sums = {}; sales.forEach((s) => { const k = D.dayOf(s.date).slice(0, 7); sums[k] = (sums[k] || 0) + SM.saleTotalUZS(s); });
+    return { title: 'Продажи по месяцам', body: UI.chart({ type: 'bar', height: 230, labels: months.map(([y, m]) => SM.MONTHS[m]), tipLabels: months.map(([y, m]) => SM.MONTHS[m] + ' ' + y), series: [{ name: 'Продажи', color: '#e0365e', values: months.map(([y, m]) => sums[key(y, m)] || 0) }], tipFmt: (v) => F.cur(v) }) };
+  }
+  const DASH_PERIODS = [['day', 'Сегодня'], ['yesterday', 'Вчера'], ['week', '7 дней'], ['month', '30 дней'], ['year', 'Год'], ['all', 'Всё время'], ['custom', 'Свои даты']];
+  /* период главной из адреса: ?p=…, для своих дат ещё ?from=…&to=… */
+  function dashRange(q) {
+    const p = DASH_PERIODS.some(([k]) => k === q.p) ? q.p : 'week';
+    if (p !== 'custom') return Object.assign({ p }, SM.periodRange(p));
+    let from = q.from || D.iso(D.addDays(today(), -6)), to = q.to || today();
+    if (from > to) [from, to] = [to, from];
+    if (to > today()) to = today();
+    if (from > to) from = to;
+    return { p, from, to, days: D.diffDays(to, from) + 1, label: (from.slice(0, 4) !== to.slice(0, 4) || to.slice(0, 4) !== today().slice(0, 4)) ? F.dm(from) + ' ' + from.slice(0, 4) + ' — ' + F.dm(to) + ' ' + to.slice(0, 4) : F.dm(from) + ' — ' + F.dm(to) };
   }
   function payByMethod(from, to) {
     const m = {};
     SM.paymentsIn(from, to).forEach((p) => (m[p.method] = (m[p.method] || 0) + SM.toUZS(p.amount, p.cur, p.rate)));
     return Object.entries(m).sort((a, b) => b[1] - a[1]).map(([k, v], i) => ({ name: SM.method(k).name, value: v, color: COLORS[i % COLORS.length] }));
   }
-  const saleLi = (s, extra) => html`<li class="click" data-act="open-sale" data-id="${s.id}"><span class="note-ic accent">${I(s.source === 'site' ? 'globe' : 'cart')}</span><div class="grow"><b class="fs-13">${s.no} · ${SM.client(s.clientId).name}</b><div class="fs-12 muted">${F.date(s.date)} · ${SM.point(s.pointId).name} · ${F.cur(SM.saleCalc(s).total, s.cur)}</div></div>${extra || UI.badge(SM.SALE_STATUS[SM.saleStatus(s)])}</li>`;
+  const saleLi = (s, extra) => html`<li class="click" data-act="open-sale" data-id="${s.id}"><span class="note-ic accent">${I(s.source === 'site' ? 'globe' : 'cart')}</span><div class="grow"><b class="fs-13">${SM.saleNo(s)} · ${SM.client(s.clientId).name}</b><div class="fs-12 muted">${F.date(s.date)} · ${SM.point(s.pointId).name} · ${F.cur(SM.saleCalc(s).total, s.cur)}</div></div>${extra || UI.badge(SM.SALE_STATUS[SM.saleStatus(s)])}</li>`;
   const card = (title, icon, body, action) => html`<div class="card"><div class="card-h"><h3>${I(icon)}${title}</h3>${action ? html`<span class="right">${action}</span>` : ''}</div><div class="card-b">${body}</div></div>`;
   const greet = () => { const h = new Date().getHours(); return h < 5 ? 'Доброй ночи' : h < 12 ? 'Доброе утро' : h < 18 ? 'Добрый день' : 'Добрый вечер'; };
   const today = () => D.todayISO();
 
   /* ---------- Руководитель и администратор ---------- */
   function managerView(r) {
-    const p = r.q.p || 'week';
-    const R = SM.periodRange(p);
+    const R = dashRange(r.q);
     const prevFrom = R.days ? D.iso(D.addDays(R.from, -R.days)) : null, prevTo = R.days ? D.iso(D.addDays(R.from, -1)) : null;
     const sToday = SM.salesIn(today(), today());
     const sPer = SM.salesIn(R.from, R.to), sPrev = R.days ? SM.salesIn(prevFrom, prevTo) : [];
@@ -47,18 +69,20 @@
     const cashU = SM.accountReport('cash_uzs', today(), today()), cashD = SM.accountReport('cash_usd', today(), today()), bank = SM.accountReport('bank', today(), today());
     const low = SM.lowStock();
     const units = SM.db.products.reduce((a, x) => a + Math.max(0, SM.qty(x.id)), 0);
-    const spark = SM.dayLabels(7).map((d) => SM.sumUZS(SM.salesIn(d, d)));
+    const chart = periodChart(R);
+    // продажи по дням периода («Сегодня» — нарастающим итогом после каждой продажи)
+    const spark = SM.series(R.from, R.to, SM.salesIn(null, null).map((s) => ({ at: s.date, v: SM.saleTotalUZS(s) })));
     return html`
-      ${UI.pageHead(greet() + ', ' + SM.user.name.split(' ')[0], 'Сводка по компании · ' + F.date(today()) + ' · курс $ ' + F.num(SM.rate()), html`${UI.periodSeg(p, SM.PERIODS.slice(0, 3))}${SM.can('sales', 2) ? html`<a class="btn btn-primary" href="#/sales/new">${I('plus')}Новая продажа</a>` : ''}`)}
+      ${UI.pageHead(greet() + ', ' + SM.user.name.split(' ')[0], 'Сводка по компании · ' + F.date(today()) + ' · курс $ ' + F.num(SM.rate()), html`${UI.periodDrop(R, DASH_PERIODS)}${SM.can('sales', 2) ? html`<a class="btn btn-primary" href="#/sales/new">${I('plus')}Новая продажа</a>` : ''}`)}
       <div class="grid g-4 keep-2 stagger">
         ${UI.kpi({ label: 'Продажи сегодня', icon: 'cart', value: F.m(SM.sumUZS(sToday)), count: Math.round(SM.sumUZS(sToday)), unit: 'сум', foot: html`${sToday.length} ${F.plural(sToday.length, 'продажа', 'продажи', 'продаж')}`, href: '#/sales', cls: 'k-accent' })}
-        ${UI.kpi({ label: 'Продажи · ' + R.label, icon: 'trendUp', value: F.m(SM.sumUZS(sPer)), count: Math.round(SM.sumUZS(sPer)), unit: 'сум', foot: html`${UI.delta(SM.sumUZS(sPer), SM.sumUZS(sPrev))} к прошлому периоду`, spark, sparkColor: '#e0365e', href: '#/reports?tab=sales' })}
+        ${UI.kpi({ label: 'Продажи · ' + R.label, icon: 'trendUp', value: F.m(SM.sumUZS(sPer)), count: Math.round(SM.sumUZS(sPer)), unit: 'сум', foot: R.days ? html`${UI.delta(SM.sumUZS(sPer), SM.sumUZS(sPrev))} к прошлому периоду` : html`${sPer.length} ${F.plural(sPer.length, 'продажа', 'продажи', 'продаж')}`, spark, sparkKey: 'dash:sales', sparkColor: '#e0365e', href: '#/reports?tab=sales' })}
         ${UI.kpi({ label: 'Поступило оплат · ' + R.label, icon: 'wallet', value: F.m(paySum), count: Math.round(paySum), unit: 'сум', foot: pend.length ? html`<span class="badge b-warn b-pulse">${pend.length} на проверке</span>` : 'все оплаты подтверждены', href: SM.can('accounting') ? '#/accounting' : '#/cash' })}
         ${UI.kpi({ label: 'Дебиторская задолженность', icon: 'scale', value: F.m(recv), count: Math.round(recv), unit: 'сум', foot: html`мы должны поставщикам: ${F.short(SM.payables())}`, href: '#/debts' })}
       </div>
       <div class="grid g-21 mt-16 stagger">
-        ${card('Продажи по дням', 'chart', html`${salesChart(14)}`, html`<a class="btn btn-ghost btn-sm" href="#/reports?tab=sales">Отчёт${I('arrowRight')}</a>`)}
-        ${card('Оплаты по способам', 'card', pays.length ? html`<div class="row" style="justify-content:center">${UI.donut(pays, { value: F.short(paySum), label: R.label })}</div>${UI.segBar(pays, { height: 8 })}` : UI.empty('Нет оплат', 'за выбранный период'))}
+        ${card(chart.title, 'chart', chart.body, html`<a class="btn btn-ghost btn-sm" href="#/reports?tab=sales">Отчёт${I('arrowRight')}</a>`)}
+        ${card('Оплаты по способам', 'card', pays.length ? html`<div class="row" style="justify-content:center">${UI.donut(pays, { value: F.short(paySum), label: R.p === 'custom' ? 'за период' : R.label })}</div>${UI.segBar(pays, { height: 8 })}` : UI.empty('Нет оплат', 'за выбранный период'))}
       </div>
       <div class="grid g-3 mt-16 stagger">
         ${card('Новые заказы и отгрузка', 'inbox', queue.length ? html`<ul class="list">${queue.slice(0, 5).map((s) => saleLi(s))}</ul>` : UI.empty('Очередь пуста'), html`<a class="btn btn-ghost btn-sm" href="#/sales">Все${I('arrowRight')}</a>`)}
@@ -84,7 +108,7 @@
       ${UI.pageHead(greet() + ', ' + SM.user.name.split(' ')[0], 'Ваши продажи и клиенты · ' + SM.user.points.map((p) => SM.point(p).name).join(', '), html`<a class="btn btn-primary" href="#/sales/new">${I('plus')}Новая продажа</a>`)}
       <div class="grid g-4 keep-2 stagger">
         ${UI.kpi({ label: 'Мои продажи сегодня', icon: 'cart', value: F.m(SM.sumUZS(sT)), count: Math.round(SM.sumUZS(sT)), unit: 'сум', foot: sT.length + ' шт.', cls: 'k-accent' })}
-        ${UI.kpi({ label: 'За 7 дней', icon: 'trendUp', value: F.m(SM.sumUZS(sW)), count: Math.round(SM.sumUZS(sW)), unit: 'сум', foot: sW.length + ' шт.', spark: SM.dayLabels(7).map((d) => SM.sumUZS(SM.salesIn(d, d, mine))) })}
+        ${UI.kpi({ label: 'За 7 дней', icon: 'trendUp', value: F.m(SM.sumUZS(sW)), count: Math.round(SM.sumUZS(sW)), unit: 'сум', foot: sW.length + ' шт.', sparkKey: 'dash:sales7', spark: SM.dayLabels(7).map((d) => SM.sumUZS(SM.salesIn(d, d, mine))) })}
         ${UI.kpi({ label: 'Долги моих клиентов', icon: 'scale', value: F.m(debts.reduce((a, x) => a + x.b, 0)), count: Math.round(debts.reduce((a, x) => a + x.b, 0)), unit: 'сум', foot: debts.length + ' ' + F.plural(debts.length, 'клиент', 'клиента', 'клиентов'), href: '#/debts' })}
         ${UI.kpi({ label: 'Черновики (резерв)', icon: 'edit', value: drafts.length, count: drafts.length, foot: 'товар отложен для клиента', href: '#/sales?st=draft' })}
       </div>
@@ -137,7 +161,7 @@
         ${UI.kpi({ label: 'Расходы за 7 дней', icon: 'coins', value: F.m(exp7.reduce((a, e) => a + SM.toUZS(e.amount, e.cur, e.rate), 0)), unit: 'сум', foot: exp7.length + ' операций', href: '#/expenses' })}
       </div>
       <div class="grid g-21 mt-16 stagger">
-        ${card('Оплаты на подтверждение', 'check', pend.length ? html`<ul class="list">${pend.map((p) => { const s = SM.db.sales.find((x) => x.id === p.saleId); return html`<li><span class="note-ic warn">${I(SM.method(p.method).icon)}</span><div class="grow"><b class="fs-13">${F.cur(p.amount, p.cur)} · ${SM.method(p.method).name}</b><div class="fs-12 muted">${s ? s.no + ' · ' : ''}${SM.client(p.clientId).name} · ${F.ago(p.at)}</div></div><button class="btn btn-ok btn-sm" data-x="pay-ok" data-id="${p.id}">${I('check')}Подтвердить</button></li>`; })}</ul>` : UI.empty('Всё подтверждено', '', 'check'), html`<a class="btn btn-ghost btn-sm" href="#/accounting">Бухгалтерия${I('arrowRight')}</a>`)}
+        ${card('Оплаты на подтверждение', 'check', pend.length ? html`<ul class="list">${pend.map((p) => { const s = SM.db.sales.find((x) => x.id === p.saleId); return html`<li><span class="note-ic warn">${I(SM.method(p.method).icon)}</span><div class="grow"><b class="fs-13">${F.cur(p.amount, p.cur)} · ${SM.method(p.method).name}</b><div class="fs-12 muted">${s ? SM.saleNo(s) + ' · ' : ''}${SM.client(p.clientId).name} · ${F.ago(p.at)}</div></div><button class="btn btn-ok btn-sm" data-x="pay-ok" data-id="${p.id}">${I('check')}Подтвердить</button></li>`; })}</ul>` : UI.empty('Всё подтверждено', '', 'check'), html`<a class="btn btn-ghost btn-sm" href="#/accounting">Бухгалтерия${I('arrowRight')}</a>`)}
         ${card('Взаиморасчёты', 'scale', debts.length ? html`<ul class="list">${debts.slice(0, 6).map((x) => html`<li class="click" data-act="open-client" data-id="${x.c.id}">${UI.avatar(x.c.name, x.c.id, 'sm')}<div class="grow"><b class="fs-13">${x.c.name}</b><div class="fs-12 muted">${x.b > 0 ? 'должен нам' : 'мы должны'}</div></div><b class="num ${x.b > 0 ? 'bad-t' : 'warn-t'}">${F.short(Math.abs(x.b))}</b></li>`)}</ul>` : UI.empty('Долгов нет'))}
       </div>`;
   }
@@ -166,8 +190,9 @@
     },
     mount(el) {
       UI.bindPeriod(el);
-      UI.$$('[data-x=ready]', el).forEach((b) => (b.onclick = () => { const s = SM.db.sales.find((x) => x.id === b.dataset.id); SM.ops.saleReady(s); UI.toast('Собрано', s.no + ' готово к отгрузке'); SM.refresh(); }));
-      UI.$$('[data-x=ship]', el).forEach((b) => (b.onclick = () => { const s = SM.db.sales.find((x) => x.id === b.dataset.id); SM.ops.saleShip(s); UI.toast('Отгружено', s.no); SM.refresh(); }));
+      if (UI.$('[data-x=period-dd]', el)) UI.bindPeriodDrop(el, dashRange(SM.route().q), DASH_PERIODS);
+      UI.$$('[data-x=ready]', el).forEach((b) => (b.onclick = () => { const s = SM.db.sales.find((x) => x.id === b.dataset.id); SM.ops.saleReady(s); UI.toast('Собрано', SM.saleNo(s) + ' готово к отгрузке'); SM.refresh(); }));
+      UI.$$('[data-x=ship]', el).forEach((b) => (b.onclick = () => { const s = SM.db.sales.find((x) => x.id === b.dataset.id); SM.ops.saleShip(s); UI.toast('Отгружено', SM.saleNo(s)); SM.refresh(); }));
       UI.$$('[data-x=pay-ok]', el).forEach((b) => (b.onclick = () => { SM.ops.confirmPayment(b.dataset.id, true); UI.toast('Оплата подтверждена'); SM.refresh(); }));
     },
   });

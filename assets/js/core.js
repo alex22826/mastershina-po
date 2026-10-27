@@ -109,20 +109,34 @@
     let db = null;
     try { db = JSON.parse(localStorage.getItem(DB_KEY) || 'null'); } catch (e) { db = null; }
     if (!db || db.version !== SM.DB_VERSION) { db = SM.seed(); SM.db = db; persist(); }
+    // с сервером даты и НДС приводит сервер; здесь — только локальный режим
+    if (SM.server) { SM.db = db; memo = {}; if (!db.lowSent) SM.lowWatch(true); return db; }
     const today = D.todayISO();
     if (db.demo && db.baseDay !== today) { shiftDates(db, D.diffDays(today, db.baseDay)); db.baseDay = today; SM.db = db; persist(); }
     // документы, оформленные до фиксации НДС, получают текущие настройки — дальше они не меняются
     const noVat = db.sales.filter((s) => s.state !== 'draft' && !s.vatCfg).concat(db.receipts.filter((r) => r.status !== 'draft' && !r.vatCfg));
     if (noVat.length) { noVat.forEach((x) => (x.vatCfg = Object.assign({}, db.settings.vat))); SM.db = db; persist(); }
     SM.db = db; memo = {};
+    // разовые дополнения демо-данных (data.js): добавляют недостающее, ничего не стирают
+    if (SM.migrate) { try { SM.migrate(); } catch (e) { console.warn('Миграция данных не выполнена', e); } SM.db = db; memo = {}; }
+    if (!db.lowSent) SM.lowWatch(true);
     return db;
   };
   function persist() {
     try { localStorage.setItem(DB_KEY, JSON.stringify(SM.db)); }
     catch (e) { console.warn('Не удалось сохранить данные', e); }
   }
-  SM.save = function () { SM.db.rev = (SM.db.rev || 0) + 1; memo = {}; persist(); SM.emit('change'); };
-  SM.resetDemo = function () { try { localStorage.removeItem(DB_KEY); } catch (e) { /* без хранилища */ } SM.db = SM.seed(); persist(); memo = {}; };
+  SM.save = function () {
+    memo = {};
+    const low = SM.lowWatch();
+    SM.db.rev = (SM.db.rev || 0) + 1; persist(); SM.emit('change'); if (SM.server) sync.push();
+    if (low.length) SM.lowToast(low);
+  };
+  SM.resetDemo = function () {
+    try { localStorage.removeItem(DB_KEY); } catch (e) { /* без хранилища */ }
+    SM.db = SM.seed(); persist(); memo = {};
+    if (SM.server) sync.reset();
+  };
   SM.memo = function (key, fn) { if (!(key in memo)) memo[key] = fn(); return memo[key]; };
   SM.uid = (p) => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   // сквозная нумерация документов: СП-0006, ПТ-0003…
@@ -144,6 +158,8 @@
   };
   SM.passHash = (login, pass) => SM.sha256(login.trim().toLowerCase() + ':' + pass + ':sm-avto');
   SM.login = async function (login, pass) {
+    await SM.ready;
+    if (SM.server) return sync.login(login, pass);
     const db = SM.db || SM.load();
     const l = String(login || '').trim().toLowerCase();
     const u = db.users.find((x) => x.login.toLowerCase() === l);
@@ -166,15 +182,144 @@
     if (!raw) return null;
     try {
       const s = JSON.parse(raw);
-      if (Date.now() - s.at > 12 * 3600 * 1000) { SM.logout(true); return null; }
+      // с сервером сессию держит токен (30 дней, продлевается сервером)
+      if (SM.server ? !s.token : Date.now() - s.at > 12 * 3600 * 1000) { SM.logout(true); return null; }
       const u = (SM.db || SM.load()).users.find((x) => x.id === s.uid);
       return u && u.active ? u : null;
     } catch (e) { return null; }
   };
   SM.logout = function (silent) {
     if (!silent && SM.user) { SM.log('Выход из системы', 'user', SM.user.id, ''); SM.save(); }
+    if (SM.server) sync.logout(silent);
     try { localStorage.removeItem(SESSION_KEY); } catch (e) { /* без хранилища */ }
   };
+
+  /* ---------- Общая база на сервере (server/server.mjs) ----------
+     Есть /api/health — данные одни на всех устройствах: localStorage служит кэшем для мгновенного показа,
+     изменения уходят на сервер (PUT с базовой ревизией, сервер сливает по объектам), чужие приходят по SSE
+     и запасному опросу. Нет сервера (python http.server, GitHub Pages) — всё как раньше, в браузере. */
+  SM.server = false;
+  SM.ready = (async () => {
+    if (typeof location === 'undefined' || typeof fetch === 'undefined' || location.protocol === 'file:') return false; // песочница сервера, файл с диска
+    const ac = new AbortController(); const t = setTimeout(() => ac.abort(), 2500);
+    try {
+      const r = await fetch('api/health', { cache: 'no-store', signal: ac.signal });
+      SM.server = r.ok && !!(await r.json()).ok;
+    } catch (e) { SM.server = false; }
+    clearTimeout(t);
+    return SM.server;
+  })();
+  const SRV_REV_KEY = 'sm.db.srvRev';
+  const sync = (SM.sync = (function () {
+    let srvRev = 0, dirty = false, inflight = false, timer = null, retry = 0, pending = null, es = null, lost = false;
+    const session = () => { try { return JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); } catch (e) { return null; } };
+    const token = () => (session() || {}).token;
+    function authLost() {
+      if (lost) return; lost = true;
+      if (es) es.close();
+      try { localStorage.removeItem(SESSION_KEY); } catch (e) { /* без хранилища */ }
+      if (!/index\.html$|\/$/.test(location.pathname)) location.replace('index.html');
+    }
+    async function api(method, url, body, opts) {
+      const r = await fetch(url, Object.assign({ method, cache: 'no-store', headers: Object.assign({ 'Content-Type': 'application/json' }, token() ? { Authorization: 'Bearer ' + token() } : {}), body: body == null ? undefined : JSON.stringify(body) }, opts));
+      if (r.status === 401) { authLost(); throw { silent: true }; }
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }
+    // открыта форма или курсор в поле — новые данные подставим после закрытия
+    const busy = () => !!document.querySelector('.overlay .modal') || (document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && !document.activeElement.matches('[data-search]'));
+    function adopt(r, force) {
+      if (!r || r.rev < srvRev) return;
+      if (dirty || inflight) return; // свои несохранённые правки важнее — сервер сольёт их и вернёт итог
+      if (!force && typeof document !== 'undefined' && SM.user && busy()) { pending = r; return; }
+      pending = null;
+      const changed = r.rev !== srvRev || !SM.db || SM.db.rev !== r.rev;
+      srvRev = r.rev; SM.db = r.doc; memo = {};
+      if (!SM.db.lowSent) SM.lowWatch(true);
+      persist();
+      try { localStorage.setItem(SRV_REV_KEY, String(srvRev)); } catch (e) { /* без хранилища */ }
+      if (changed && SM.user) {
+        const u = SM.db.users.find((x) => x.id === SM.user.id);
+        if (!u || !u.active) return authLost();
+        SM.user = u;
+        const y = window.scrollY;
+        if (SM.refresh) SM.refresh();
+        window.scrollTo(0, y);
+        SM.emit('sync', r.rev);
+      }
+    }
+    async function pull() {
+      if (!SM.server || !token() || lost) return;
+      if (dirty || inflight) return push(0);
+      try { adopt(await api('GET', 'api/db')); } catch (e) { /* нет сети — повторим по таймеру */ }
+    }
+    function push(delay = 300) {
+      dirty = true;
+      clearTimeout(timer);
+      timer = setTimeout(send, delay);
+    }
+    async function send() {
+      if (inflight || !dirty || lost || !token()) return;
+      dirty = false; inflight = true;
+      let res = null;
+      try { res = await api('PUT', 'api/db', { baseRev: srvRev, doc: SM.db }); retry = 0; }
+      catch (e) { if (!e || !e.silent) { dirty = true; retry = Math.min(retry + 1, 5); clearTimeout(timer); timer = setTimeout(send, 1000 * retry); } }
+      inflight = false;
+      if (dirty) { if (res) { clearTimeout(timer); timer = setTimeout(send, 50); } return; } // пока летел запрос, появились новые правки — отправим их от той же базы
+      if (res) adopt(res, true);
+    }
+    async function flush() { clearTimeout(timer); while (dirty || inflight) { if (!inflight) await send(); else await new Promise((r) => setTimeout(r, 50)); if (retry) break; } }
+    function listen() {
+      if (lost || !token() || (es && es.readyState !== 2)) return;
+      if (es) es.close();
+      es = new EventSource('api/events?t=' + encodeURIComponent(token()));
+      es.addEventListener('rev', (e) => { if (Number(e.data) > srvRev) pull(); });
+    }
+    async function start() {
+      let cache = null;
+      try { if (localStorage.getItem(SRV_REV_KEY)) cache = JSON.parse(localStorage.getItem(DB_KEY) || 'null'); } catch (e) { cache = null; }
+      if (cache && cache.version === SM.DB_VERSION) { SM.db = cache; srvRev = Number(localStorage.getItem(SRV_REV_KEY)) || 0; pull(); }
+      else { try { adopt(await api('GET', 'api/db'), true); } catch (e) { if (e && e.silent) return false; SM.load(); } }
+      return true;
+    }
+    function run() {
+      listen();
+      setInterval(() => { if (pending && !busy()) adopt(pending); }, 500);
+      setInterval(() => { listen(); pull(); }, 5000);
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) { listen(); pull(); } });
+      addEventListener('online', () => { listen(); pull(); });
+      addEventListener('pagehide', () => { if (dirty && token()) fetch('api/db', { method: 'PUT', keepalive: true, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() }, body: JSON.stringify({ baseRev: srvRev, doc: SM.db }) }).catch(() => {}); });
+    }
+    async function login(login, pass) {
+      const r = await api('POST', 'api/login', { login, pass });
+      if (!r.ok) return r;
+      localStorage.setItem(SESSION_KEY, JSON.stringify({ uid: r.uid, at: Date.now(), token: r.token }));
+      lost = false;
+      adopt(await api('GET', 'api/db'), true);
+      const u = SM.db.users.find((x) => x.id === r.uid);
+      u.lastLogin = new Date().toISOString();
+      SM.log('Вход в систему', 'user', u.id, '', u);
+      SM.save();
+      await flush();
+      return { ok: true, user: u };
+    }
+    function logout(silent) {
+      const t = token();
+      if (es) es.close();
+      if (!t) return;
+      const body = dirty ? JSON.stringify({ baseRev: srvRev, doc: SM.db }) : null;
+      dirty = false; clearTimeout(timer);
+      const h = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + t };
+      (body ? fetch('api/db', { method: 'PUT', headers: h, body, keepalive: body.length < 60000 }) : Promise.resolve()).catch(() => {})
+        .then(() => fetch('api/logout', { method: 'POST', headers: h, keepalive: true })).catch(() => {});
+      void silent;
+    }
+    async function reset() {
+      dirty = false; clearTimeout(timer);
+      try { adopt(await api('POST', 'api/reset'), true); } catch (e) { /* не удалось — данные подтянутся опросом */ }
+    }
+    return { start, run, pull, push, flush, login, logout, reset, rev: () => srvRev };
+  })());
 
   /* ---------- Разделы и права (ТЗ, раздел 3) ---------- */
   SM.LEVELS = ['Нет доступа', 'Просмотр', 'Изменение', 'Полный'];
@@ -182,23 +327,30 @@
     { key: 'dashboard', title: 'Главная', group: 'Главное', icon: 'home', short: 'Главная' },
     { key: 'notifications', title: 'Уведомления', group: 'Главное', icon: 'bell', short: 'Увед.' },
     { key: 'sales', title: 'Продажи', group: 'Продажи', icon: 'cart', short: 'Продажи' },
-    { key: 'clients', title: 'Клиенты и контрагенты', group: 'Продажи', icon: 'users', short: 'Клиенты' },
-    { key: 'debts', title: 'Задолженности', group: 'Продажи', icon: 'scale', short: 'Долги' },
+    { key: 'clients', title: 'Контрагенты', group: 'Продажи', icon: 'users', short: 'Клиенты' },
     { key: 'delivery', title: 'Доставка', group: 'Продажи', icon: 'truck', short: 'Доставка' },
     { key: 'products', title: 'Товары', group: 'Склад', icon: 'tire', short: 'Товары' },
     { key: 'stock', title: 'Остатки', group: 'Склад', icon: 'layers', short: 'Остатки' },
-    { key: 'receipts', title: 'Поступления', group: 'Склад', icon: 'inbox', short: 'Приход' },
+    { key: 'receipts', title: 'Поступления', group: 'Склад', icon: 'inbox', short: 'Приход', tabOf: 'stock' },
     { key: 'cash', title: 'Касса и банк', group: 'Финансы', icon: 'wallet', short: 'Касса' },
+    { key: 'debts', title: 'Задолженности', group: 'Финансы', icon: 'scale', short: 'Долги' },
     { key: 'accounting', title: 'Бухгалтерия', group: 'Финансы', icon: 'calc', short: 'Бухгалт.' },
-    { key: 'expenses', title: 'Расходы', group: 'Финансы', icon: 'coins', short: 'Расходы' },
-    { key: 'rates', title: 'Валюты и НДС', group: 'Финансы', icon: 'percent', short: 'Курсы' },
-    { key: 'documents', title: 'Документы', group: 'Документы и отчёты', icon: 'file', short: 'Докум.' },
-    { key: 'reports', title: 'Отчёты', group: 'Документы и отчёты', icon: 'chart', short: 'Отчёты' },
-    { key: 'users', title: 'Пользователи и роли', group: 'Администрирование', icon: 'shield', short: 'Роли' },
-    { key: 'refs', title: 'Справочники', group: 'Администрирование', icon: 'book', short: 'Справ.' },
-    { key: 'history', title: 'История операций', group: 'Администрирование', icon: 'history', short: 'История' },
+    { key: 'expenses', title: 'Расходы', group: 'Финансы', icon: 'coins', short: 'Расходы', tabOf: 'cash' },
+    { key: 'reports', title: 'Отчёты', group: 'Финансы', icon: 'chart', short: 'Отчёты', tabOf: 'accounting' },
+    { key: 'rates', title: 'Валюты и НДС', group: 'Финансы', icon: 'percent', short: 'Курсы', tabOf: 'accounting' },
+    { key: 'documents', title: 'Документы', group: 'Документы', icon: 'file', short: 'Докум.' },
+    { key: 'contracts', title: 'Конструктор договоров', group: 'Документы', icon: 'edit', short: 'Договоры', tabOf: 'documents', permOf: 'documents' },
+    { key: 'users', title: 'Пользователи и роли', menu: 'Настройки', group: 'Администрирование', icon: 'shield', short: 'Настройки' },
+    { key: 'refs', title: 'Справочники', group: 'Администрирование', icon: 'book', short: 'Справ.', tabOf: 'users' },
+    { key: 'history', title: 'История операций', group: 'Администрирование', icon: 'history', short: 'История', tabOf: 'users' },
   ];
   SM.section = (k) => SM.SECTIONS.find((s) => s.key === k);
+  // menu — название раздела в меню и заголовке, если отличается от вкладки (users → «Настройки»)
+  SM.navTitle = (k) => { const s = SM.section(k); return s.menu || s.title; };
+  // tabOf — раздел показан вкладкой родителя (права у него свои); вкладки родителя: он сам и его разделы-вкладки
+  SM.tabsOf = (k) => [k].concat(SM.SECTIONS.filter((s) => s.tabOf === k).map((s) => s.key));
+  // родитель есть в меню, если доступна хотя бы одна его вкладка
+  SM.canNav = (k, u = SM.user) => SM.tabsOf(k).some((t) => SM.can(t, 1, u));
   // права на действия (кроме уровня доступа к разделу)
   SM.FLAGS = [
     { key: 'confirmPay', title: 'Подтверждение оплат', hint: 'бухгалтер проверяет поступление и подтверждает или отклоняет оплату (ТЗ 11.2)' },
@@ -240,7 +392,8 @@
     },
   };
   SM.roleOf = (u = SM.user) => (SM.db.roles && SM.db.roles[u.role]) || SM.ROLES[u.role];
-  SM.level = (section, u = SM.user) => { if (!u) return 0; const r = SM.roleOf(u); return (r && r.perms[section]) || 0; };
+  // permOf — своего ключа прав нет, уровень берётся у другого раздела (и в кастомных ролях db.roles)
+  SM.level = (section, u = SM.user) => { if (!u) return 0; const s = SM.section(section); if (s && s.permOf) section = s.permOf; const r = SM.roleOf(u); return (r && r.perms[section]) || 0; };
   SM.can = (section, lv = 1, u = SM.user) => SM.level(section, u) >= lv;
   SM.flag = (f, u = SM.user) => { if (!u) return false; const r = SM.roleOf(u); return !!(r && r.flags[f]); };
   SM.discountMax = (u = SM.user) => { const r = SM.roleOf(u); return r ? r.discountMax || 0 : 0; };
@@ -289,11 +442,12 @@
      (как курс, ТЗ 10); без документа — текущие из «Валюты и НДС» */
   SM.vatCfg = (doc) => (doc && doc.vatCfg) || SM.db.settings.vat;
   SM.vatSnap = () => Object.assign({}, SM.db.settings.vat);
-  /* НДС: «в т.ч.» (цена уже с НДС) или «сверху». Ставка по умолчанию 12% (ТЗ 10) */
+  SM.vatIncl = (doc) => SM.vatCfg(doc).mode === 'included';
+  /* НДС: «в т.ч.» (цена уже с НДС, mode: 'included') или «сверху» (mode: 'top', и если режим не записан). Ставка по умолчанию 12% (ТЗ 10) */
   SM.vatSplit = function (amount, on = true, cfg) {
     const v = cfg || SM.vatCfg();
     if (!on || !v.enabled) return { net: amount, vat: 0, total: amount };
-    if (v.mode === 'top') { const vat = amount * v.rate / 100; return { net: amount, vat, total: amount + vat }; }
+    if (v.mode !== 'included') { const vat = amount * v.rate / 100; return { net: amount, vat, total: amount + vat }; }
     const vat = amount * v.rate / (100 + v.rate);
     return { net: amount - vat, vat, total: amount };
   };
@@ -369,6 +523,9 @@
     if (c.paid > 0) return ['Частично', 'b-violet'];
     return [s.credit ? 'В долг' : 'Не оплачено', s.credit ? 'b-bad' : 'b-warn'];
   };
+  // номер продажи для людей: «№ 4»; хранимый s.no («СП-0004») не меняется. Поиск находит и по «4»/«№4»/«№ 4», и по «СП-0004»
+  SM.saleNo = (s) => { const n = parseInt(String((s && s.no) || '').replace(/\D/g, ''), 10); return n ? '№ ' + n : (s && s.no) || ''; };
+  SM.saleHay = (s) => { const n = SM.saleNo(s); return s.no + ' ' + n + ' ' + n.replace(/\s/g, '') + ' ' + n.replace(/\D/g, ''); };
   SM.shipStatus = (s) => (s.shippedAt ? ['Отгружено', 'b-ok'] : s.readyAt ? ['Собрано', 'b-accent'] : ['Не отгружено', 'b-slate']);
   SM.canReady = (s) => s.state === 'posted' && !s.readyAt && !s.shippedAt && (SM.saleCalc(s).debt === 0 || s.credit);
   SM.saleVisible = (s, u = SM.user) => (SM.flag('ownOnly', u) ? s.sellerId === u.id : true) && (u.role === 'storekeeper' ? SM.pointVisible(s.pointId, u) : true);
@@ -384,12 +541,12 @@
       const ops = [];
       // удалённый черновик (отменён, не проводился) во взаиморасчёты не попадает
       SM.db.sales.filter((s) => s.clientId === clientId && s.state !== 'draft' && !(s.state === 'cancelled' && !s.postedAt)).forEach((s) => {
-        ops.push({ at: s.date, doc: 'Продажа ' + s.no, ref: s.id, kind: 'sale', debit: SM.saleTotalUZS(s), credit: 0 });
-        if (s.state === 'cancelled') ops.push({ at: s.cancelledAt || s.date, doc: 'Отмена продажи ' + s.no, ref: s.id, kind: 'cancel', debit: 0, credit: SM.saleTotalUZS(s) });
+        ops.push({ at: s.date, doc: 'Продажа ' + SM.saleNo(s), ref: s.id, kind: 'sale', debit: SM.saleTotalUZS(s), credit: 0 });
+        if (s.state === 'cancelled') ops.push({ at: s.cancelledAt || s.date, doc: 'Отмена продажи ' + SM.saleNo(s), ref: s.id, kind: 'cancel', debit: 0, credit: SM.saleTotalUZS(s) });
       });
       SM.db.payments.filter((p) => p.clientId === clientId && p.status === 'confirmed').forEach((p) => {
         const v = SM.toUZS(p.amount, p.cur, p.rate);
-        if (p.dir === 'in') ops.push({ at: p.at, doc: 'Оплата · ' + SM.method(p.method).name + (p.saleId ? ' (' + (SM.db.sales.find((s) => s.id === p.saleId) || {}).no + ')' : ''), ref: p.id, kind: 'pay', debit: 0, credit: v });
+        if (p.dir === 'in') ops.push({ at: p.at, doc: 'Оплата · ' + SM.method(p.method).name + (p.saleId ? ' (' + SM.saleNo(SM.db.sales.find((s) => s.id === p.saleId)) + ')' : ''), ref: p.id, kind: 'pay', debit: 0, credit: v });
         else ops.push({ at: p.at, doc: (p.refund ? 'Возврат денег · ' : 'Оплата поставщику · ') + SM.method(p.method).name, ref: p.id, kind: 'payout', debit: v, credit: 0 });
       });
       SM.db.receipts.filter((r) => r.supplierId === clientId && r.status !== 'draft').forEach((r) => {
@@ -438,7 +595,7 @@
     SM.db.payments.filter((p) => p.status === 'confirmed').forEach((p) => {
       const sale = p.saleId ? SM.db.sales.find((s) => s.id === p.saleId) : null;
       out.push({ at: p.confirmedAt || p.at, acc: p.method, amount: p.dir === 'in' ? p.amount : -p.amount, cur: p.cur, rate: p.rate,
-        kind: p.dir === 'in' ? 'in' : p.refund ? 'refund' : 'payout', title: p.dir === 'in' ? 'Оплата' + (sale ? ' по ' + sale.no : '') : p.refund ? 'Возврат клиенту' : 'Оплата поставщику',
+        kind: p.dir === 'in' ? 'in' : p.refund ? 'refund' : 'payout', title: p.dir === 'in' ? 'Оплата' + (sale ? ' по ' + SM.saleNo(sale) : '') : p.refund ? 'Возврат клиенту' : 'Оплата поставщику',
         who: SM.client(p.clientId).name, ref: p.id, saleId: p.saleId });
     });
     SM.db.expenses.filter((e) => !e.cancelled).forEach((e) => out.push({ at: e.date + 'T12:00:00', acc: e.account, amount: -e.amount, cur: e.cur, rate: e.rate || SM.rate(), kind: 'expense', title: SM.expCat(e.cat).name, who: e.comment || '', ref: e.id }));
@@ -456,6 +613,24 @@
     });
     return { start, inc, out, end: start + inc - out };
   };
+  /* Ряд для графика-спарклайна: items — [{ at, v }]. Один день — значение после каждой операции (cum — от остатка на начало,
+     иначе от нуля); несколько дней — по дням (cum — остаток на конец дня, иначе сумма за день). Больше 60 дней — 60 точек. */
+  SM.series = function (from, to, items, cum, base = 0) {
+    const its = items.slice().sort((a, b) => String(a.at).localeCompare(String(b.at)));
+    const today = D.todayISO();
+    to = to || today; from = from || (its.length ? D.dayOf(its[0].at) : to); if (from > to) from = to;
+    let v = base;
+    if (cum) its.forEach((x) => { if (D.dayOf(x.at) < from) v += x.v; });
+    const inR = its.filter((x) => { const d = D.dayOf(x.at); return d >= from && d <= to; });
+    if (from === to) { if (!cum) v = 0; const out = [v]; inR.forEach((x) => out.push((v += x.v))); if (out.length < 2) out.push(v); return out; }
+    const by = {}; inR.forEach((x) => { const d = D.dayOf(x.at); by[d] = (by[d] || 0) + x.v; });
+    const days = []; for (let d = from; d <= to; d = D.iso(D.addDays(d, 1))) days.push(d);
+    let out = days.map((d) => (cum ? (v += by[d] || 0) : by[d] || 0));
+    if (out.length > 60) { const k = out.length / 60; out = Array.from({ length: 60 }, (_, i) => { const a = Math.floor(i * k), b = Math.floor((i + 1) * k); return cum ? out[b - 1] : out.slice(a, b).reduce((s, x) => s + x, 0); }); }
+    return out;
+  };
+  // ряд остатка счёта: от остатка на начало
+  SM.balanceSeries = (acc, from, to) => SM.series(from, to, SM.cashFlows().filter((f) => f.acc === acc).map((f) => ({ at: f.at, v: f.amount })), true, (SM.db.settings.opening || {})[acc] || 0);
   // пока одна категория — «Расходы компании», а на что потрачено, пишут текстом
   SM.EXP_CATS_DEFAULT = [{ id: 'company', name: 'Расходы компании' }];
   SM.expCat = (id) => byId(SM.db.expCats, id) || { id, name: id };
@@ -484,12 +659,37 @@
     ship: ['box', 'info', 'Заявка на отгрузку'], transfer: ['repeat', 'info', 'Перемещение'], delivery: ['truck', 'info', 'Доставка'], cancel: ['x', 'bad', 'Отмена операции'],
     debt: ['scale', 'bad', 'Задолженность'], low: ['alert', 'warn', 'Низкий остаток'], receipt: ['inbox', 'ok', 'Поступление'], site: ['globe', 'info', 'Заказ с сайта'],
   };
+  /* низкий остаток (п.19): уведомление в момент, когда товар перешёл «выше минимума» → «на минимуме или ниже»
+     (любая операция: продажа, правка, списание, перемещение, увеличение минимума). db.lowSent — о ком уже сообщили;
+     снимается, когда остаток снова выше минимума. Нет отметки (новая или старая база) — запоминаем текущее молча. */
+  SM.lowWatch = function (silent) {
+    const db = SM.db;
+    if (!db || !db.products) return [];
+    const was = db.lowSent, now = {}, fresh = [];
+    SM.lowStock().forEach((p) => { now[p.id] = 1; if (was && !was[p.id]) fresh.push(p); });
+    db.lowSent = now;
+    if (silent || !was) return [];
+    fresh.forEach((p) => { SM.notify('low', 'Низкий остаток: ' + p.name, 'Осталось ' + SM.qty(p.id) + ' ' + p.unit + ', минимум ' + (p.min || 0), SM.lowHref(p), ['admin', 'storekeeper', 'head']); SM.db.notes[SM.db.notes.length - 1].pid = p.id; });
+    return fresh;
+  };
+  SM.lowHref = (p) => '#/stock?low=1&q=' + encodeURIComponent(p.code);
+  SM.lowToast = function (list) {
+    const UI = SM.ui;
+    if (!UI || !UI.toast || !SM.user) return;
+    const one = list.length === 1, p = list[0];
+    const t = UI.toast(one ? 'Низкий остаток' : 'Низкий остаток у ' + list.length + ' товаров', one ? p.name + ' — осталось ' + SM.qty(p.id) + ' ' + p.unit + ', минимум ' + (p.min || 0) : list.map((x) => x.name).join(', '), 'warn', { icon: 'alert', ms: 7000 });
+    const g = t.el.querySelector('.grow');
+    g.classList.add('t-link'); g.dataset.lowToast = '1';
+    g.onclick = () => { location.hash = one ? SM.lowHref(p) : '#/stock?low=1'; t.close(); };
+  };
   SM.notesFor = function (u = SM.user) {
     const stored = SM.db.notes.filter((n) => n.roles.includes(u.role) || n.uids.includes(u.id) || (u.role === 'admin' && n.roles.length));
     // «живые» предупреждения: низкий остаток (склад, админ) и просроченные долги
     const live = [];
-    if (['admin', 'storekeeper', 'head'].includes(u.role)) SM.lowStock().slice(0, 12).forEach((p) => live.push({ id: 'low-' + p.id, live: true, kind: 'low', at: new Date().toISOString(), title: p.name, text: 'Осталось ' + SM.qty(p.id) + ' ' + p.unit + ' при минимуме ' + p.min, href: '#/stock?q=' + encodeURIComponent(p.code) }));
-    if (['admin', 'head', 'accountant', 'seller'].includes(u.role)) SM.db.sales.filter((s) => SM.overdue(s) && SM.saleVisible(s, u)).forEach((s) => live.push({ id: 'od-' + s.id, live: true, kind: 'debt', at: s.due + 'T09:00:00', title: SM.client(s.clientId).name, text: 'Просрочена оплата по ' + s.no + ': ' + F.cur(SM.saleCalc(s).debt, s.cur), href: '#/sales/' + s.id }));
+    // товар, о котором уже есть запись «Низкий остаток» (п.19), второй раз «живым» не показываем
+    const told = new Set(stored.filter((n) => n.kind === 'low' && n.pid).map((n) => n.pid));
+    if (['admin', 'storekeeper', 'head'].includes(u.role)) SM.lowStock().filter((p) => !told.has(p.id)).slice(0, 12).forEach((p) => live.push({ id: 'low-' + p.id, live: true, kind: 'low', at: new Date().toISOString(), title: p.name, text: 'Осталось ' + SM.qty(p.id) + ' ' + p.unit + ' при минимуме ' + p.min, href: '#/stock?q=' + encodeURIComponent(p.code) }));
+    if (['admin', 'head', 'accountant', 'seller'].includes(u.role)) SM.db.sales.filter((s) => SM.overdue(s) && SM.saleVisible(s, u)).forEach((s) => live.push({ id: 'od-' + s.id, live: true, kind: 'debt', at: s.due + 'T09:00:00', title: SM.client(s.clientId).name, text: 'Просрочена оплата по ' + SM.saleNo(s) + ': ' + F.cur(SM.saleCalc(s).debt, s.cur), href: '#/sales/' + s.id }));
     return live.concat(stored.slice().sort((a, b) => String(b.at).localeCompare(String(a.at))));
   };
   SM.unread = (u = SM.user) => SM.notesFor(u).filter((n) => !n.live && !n.readBy.includes(u.id));
@@ -506,7 +706,7 @@
     // изменение проведённой (ещё не отгруженной) продажи: старые строки возвращаются на склад, новые списываются
     const repost = !isNew && s.state === 'posted' && !s.shippedAt ? { items: s.items.map((l) => Object.assign({}, l)), pointId: s.pointId } : null;
     Object.assign(s, { date: data.date, clientId: data.clientId, sellerId: data.sellerId || me().id, pointId: data.pointId, items: data.items, docDisc: +data.docDisc || 0,
-      cur: data.cur, rateType: data.rateType, rate: +data.rate, vat: !!data.vat, vatCfg: SM.vatSnap(), receive: data.receive, credit: !!data.credit, due: data.credit ? data.due : null, comment: data.comment || '', source: data.source || s.source || 'office' });
+      cur: data.cur, rateType: data.rateType, rate: +data.rate, vat: !!data.vat, vatCfg: data.vatCfg || SM.vatSnap(), receive: data.receive, credit: !!data.credit, due: data.credit ? data.due : null, comment: data.comment || '', source: data.source || s.source || 'office' });
     if (isNew) SM.db.sales.push(s);
     s.history.push({ at: new Date().toISOString(), uid: me().id, text: isNew ? 'Создана' : 'Изменена' });
     if (post && wasDraft) {
@@ -515,7 +715,7 @@
       // ТЗ 9.1: после проведения товар автоматически списывается с выбранной точки
       s.items.forEach((l) => SM.addMove(l.productId, s.pointId, -l.qty, 'sale', s.no));
       s.history.push({ at: s.postedAt, uid: me().id, text: 'Проведена, товар списан с точки «' + SM.point(s.pointId).name + '»' });
-      SM.notify('sale', 'Новая продажа ' + s.no, SM.client(s.clientId).name + ' · ' + F.cur(SM.saleCalc(s).total, s.cur), '#/sales/' + s.id, ['admin', 'head', 'storekeeper']);
+      SM.notify('sale', 'Новая продажа ' + SM.saleNo(s), SM.client(s.clientId).name + ' · ' + F.cur(SM.saleCalc(s).total, s.cur), '#/sales/' + s.id, ['admin', 'head', 'storekeeper']);
     }
     if (repost) {
       repost.items.forEach((l) => SM.addMove(l.productId, repost.pointId, l.qty, 'return', 'Изменение ' + s.no));
@@ -525,7 +725,7 @@
     // оплаты, указанные при оформлении — уходят бухгалтеру на подтверждение (ТЗ 11.2)
     (data.payments || []).filter((p) => p.amount > 0).forEach((p) => ops.addPayment(s, p, true));
     if (data.receive === 'delivery' && post && !SM.db.deliveries.some((d) => d.saleId === s.id)) ops.createDelivery({ saleId: s.id, clientId: s.clientId, address: data.address || SM.client(s.clientId).address, phone: SM.client(s.clientId).phone, kind: 'own', paid: false, cost: 0 }, true);
-    SM.log(isNew ? 'Создана продажа' : 'Изменена продажа', 'sale', s.id, s.no + (post ? ' · проведена' : ' · черновик'));
+    SM.log(isNew ? 'Создана продажа' : 'Изменена продажа', 'sale', s.id, SM.saleNo(s) + (post ? ' · проведена' : ' · черновик'));
     SM.save();
     return s;
   };
@@ -537,8 +737,8 @@
     if (SM.flag('confirmPay')) { pay.status = 'confirmed'; pay.confirmedBy = me().id; pay.confirmedAt = pay.at; }
     SM.db.payments.push(pay);
     if (s) s.history.push({ at: pay.at, uid: me().id, text: 'Оплата ' + F.cur(pay.amount, pay.cur) + ' · ' + m.name + (pay.status === 'pending' ? ' — на проверке' : ' — подтверждена') });
-    if (pay.status === 'pending') SM.notify('pay', 'Оплата на подтверждение', (s ? s.no + ' · ' : '') + SM.client(pay.clientId).name + ' · ' + F.cur(pay.amount, pay.cur) + ' · ' + m.name, '#/accounting', ['accountant', 'admin']);
-    SM.log('Добавлена оплата', 'payment', pay.id, F.cur(pay.amount, pay.cur) + ' · ' + m.name + (s ? ' · ' + s.no : ''));
+    if (pay.status === 'pending') SM.notify('pay', 'Оплата на подтверждение', (s ? SM.saleNo(s) + ' · ' : '') + SM.client(pay.clientId).name + ' · ' + F.cur(pay.amount, pay.cur) + ' · ' + m.name, '#/accounting', ['accountant', 'admin']);
+    SM.log('Добавлена оплата', 'payment', pay.id, F.cur(pay.amount, pay.cur) + ' · ' + m.name + (s ? ' · ' + SM.saleNo(s) : ''));
     if (!silent) SM.save();
     return pay;
   };
@@ -564,27 +764,27 @@
     const s = p.saleId ? SM.db.sales.find((x) => x.id === p.saleId) : null;
     if (s) {
       s.history.push({ at: p.confirmedAt, uid: me().id, text: (ok ? 'Оплата подтверждена: ' : 'Оплата отклонена: ') + F.cur(p.amount, p.cur) + (comment ? ' · ' + comment : '') });
-      SM.notify(ok ? 'payok' : 'payno', (ok ? 'Оплата подтверждена · ' : 'Оплата отклонена · ') + s.no, SM.client(s.clientId).name + ' · ' + F.cur(p.amount, p.cur) + (comment ? ' · ' + comment : ''), '#/sales/' + s.id, ['admin'], [s.sellerId]);
-      if (ok && SM.saleCalc(s).debt === 0 && !s.readyAt) SM.notify('ship', 'Можно собирать ' + s.no, 'Оплата получена полностью · ' + SM.point(s.pointId).name, '#/sales/' + s.id, ['storekeeper']);
+      SM.notify(ok ? 'payok' : 'payno', (ok ? 'Оплата подтверждена · ' : 'Оплата отклонена · ') + SM.saleNo(s), SM.client(s.clientId).name + ' · ' + F.cur(p.amount, p.cur) + (comment ? ' · ' + comment : ''), '#/sales/' + s.id, ['admin'], [s.sellerId]);
+      if (ok && SM.saleCalc(s).debt === 0 && !s.readyAt) SM.notify('ship', 'Можно собирать ' + SM.saleNo(s), 'Оплата получена полностью · ' + SM.point(s.pointId).name, '#/sales/' + s.id, ['storekeeper']);
     }
-    SM.log(ok ? 'Оплата подтверждена' : 'Оплата отклонена', 'payment', p.id, F.cur(p.amount, p.cur) + (s ? ' · ' + s.no : '') + (comment ? ' · ' + comment : ''));
+    SM.log(ok ? 'Оплата подтверждена' : 'Оплата отклонена', 'payment', p.id, F.cur(p.amount, p.cur) + (s ? ' · ' + SM.saleNo(s) : '') + (comment ? ' · ' + comment : ''));
     SM.save();
   };
   ops.saleReady = function (s) {
     s.readyAt = new Date().toISOString();
     s.history.push({ at: s.readyAt, uid: me().id, text: 'Собрано, готово к отгрузке' });
-    SM.notify('ship', 'Готово к отгрузке · ' + s.no, SM.client(s.clientId).name + ' · ' + SM.point(s.pointId).name, '#/sales/' + s.id, ['admin', 'courier'], [s.sellerId]);
-    SM.log('Готово к отгрузке', 'sale', s.id, s.no); SM.save();
+    SM.notify('ship', 'Готово к отгрузке · ' + SM.saleNo(s), SM.client(s.clientId).name + ' · ' + SM.point(s.pointId).name, '#/sales/' + s.id, ['admin', 'courier'], [s.sellerId]);
+    SM.log('Готово к отгрузке', 'sale', s.id, SM.saleNo(s)); SM.save();
   };
   ops.saleShip = function (s) {
     s.shippedAt = new Date().toISOString();
     s.history.push({ at: s.shippedAt, uid: me().id, text: 'Отгружено' });
-    SM.log('Отгрузка', 'sale', s.id, s.no); SM.save();
+    SM.log('Отгрузка', 'sale', s.id, SM.saleNo(s)); SM.save();
   };
   ops.saleDone = function (s) {
     s.state = 'done'; s.doneAt = new Date().toISOString();
     s.history.push({ at: s.doneAt, uid: me().id, text: 'Завершено' });
-    SM.log('Продажа завершена', 'sale', s.id, s.no); SM.save();
+    SM.log('Продажа завершена', 'sale', s.id, SM.saleNo(s)); SM.save();
   };
   ops.saleCancel = function (s, reason) {
     const wasPosted = s.state === 'posted';
@@ -594,8 +794,8 @@
     SM.db.payments.filter((p) => p.saleId === s.id && p.status === 'pending').forEach((p) => { p.status = 'rejected'; p.comment = 'Продажа отменена'; });
     SM.db.deliveries.filter((d) => d.saleId === s.id && d.status !== 'delivered').forEach((d) => (d.status = 'cancelled'));
     s.history.push({ at: s.cancelledAt, uid: me().id, text: 'Отменена: ' + reason });
-    SM.notify('cancel', 'Отменена продажа ' + s.no, reason, '#/sales/' + s.id, ['admin', 'head', 'accountant', 'storekeeper']);
-    SM.log('Отмена продажи', 'sale', s.id, s.no + ' · ' + reason); SM.save();
+    SM.notify('cancel', 'Отменена продажа ' + SM.saleNo(s), reason, '#/sales/' + s.id, ['admin', 'head', 'accountant', 'storekeeper']);
+    SM.log('Отмена продажи', 'sale', s.id, SM.saleNo(s) + ' · ' + reason); SM.save();
   };
 
   ops.saveReceipt = function (data, post) {
@@ -668,10 +868,30 @@
     Object.assign(x, patch);
     x.history.push({ at: new Date().toISOString(), uid: me().id, text });
     const s = x.saleId ? SM.db.sales.find((z) => z.id === x.saleId) : null;
-    if (patch.status === 'handed' && s && !s.shippedAt) { s.shippedAt = new Date().toISOString(); s.history.push({ at: s.shippedAt, uid: me().id, text: 'Отгружено водителю (' + x.no + ')' }); }
-    if (patch.status === 'delivered' && s && s.state === 'posted' && SM.saleCalc(s).debt === 0) { s.state = 'done'; s.doneAt = new Date().toISOString(); s.history.push({ at: s.doneAt, uid: me().id, text: 'Доставлено клиенту — продажа завершена' }); }
+    // shipBy/doneBy — что отметила именно эта доставка: только это снимается при возврате (ops.deliveryBack)
+    if (patch.status === 'handed' && s && !s.shippedAt) { s.shippedAt = new Date().toISOString(); s.shipBy = x.id; s.history.push({ at: s.shippedAt, uid: me().id, text: 'Отгружено водителю (' + x.no + ')' }); }
+    if (patch.status === 'delivered' && s && s.state === 'posted' && SM.saleCalc(s).debt === 0) { s.state = 'done'; s.doneAt = new Date().toISOString(); s.doneBy = x.id; s.history.push({ at: s.doneAt, uid: me().id, text: 'Доставлено клиенту — продажа завершена' }); }
     if (patch.status) SM.notify(patch.status === 'cancelled' ? 'cancel' : 'delivery', 'Доставка ' + x.no + ': ' + SM.DELIVERY_STATUS[x.status][0].toLowerCase(), SM.client(x.clientId).name, '#/delivery', ['admin', 'courier'], s ? [s.sellerId] : []);
     SM.log('Доставка ' + x.no, 'delivery', x.id, text); SM.save();
+  };
+  /* возврат заявки на шаг назад. Остатки списываются при проведении продажи, доставка их не трогает — и возврат тоже.
+     Откатывается только отметка этой доставки: «Доставлена» → «Передана» — завершение продажи (снова «Отгружено»);
+     «Передана» → «Назначена» и «Отменена» → «Новая» — отгрузка (снова «Собрано»). Продажа отменена или
+     завершена вручную — её не трогаем. Старые заявки без shipBy/doneBy узнаём по записи в истории продажи. */
+  SM.dlvSaleBack = function (x, to) {
+    const s = x.saleId ? SM.db.sales.find((z) => z.id === x.saleId) : null;
+    if (!s || s.state === 'cancelled') return null;
+    const mine = (k, t) => s[k] === x.id || (!(k in s) && s.history.some((h) => h.text === t));
+    if (x.status === 'delivered') return s.state === 'done' && mine('doneBy', 'Доставлено клиенту — продажа завершена') ? 'done' : null;
+    if (x.status === 'handed' || (x.status === 'cancelled' && to === 'new')) return s.state === 'posted' && s.shippedAt && mine('shipBy', 'Отгружено водителю (' + x.no + ')') ? 'ship' : null;
+    return null;
+  };
+  ops.deliveryBack = function (x, to) {
+    const s = x.saleId ? SM.db.sales.find((z) => z.id === x.saleId) : null;
+    const undo = SM.dlvSaleBack(x, to), name = SM.DELIVERY_STATUS[to][0], at = new Date().toISOString();
+    if (undo === 'done') { s.state = 'posted'; s.doneAt = null; s.doneBy = null; s.history.push({ at, uid: me().id, text: 'Доставка ' + x.no + ' возвращена в «' + name + '» — продажа снова не завершена' }); }
+    if (undo === 'ship') { s.shippedAt = null; s.shipBy = null; s.history.push({ at, uid: me().id, text: 'Доставка ' + x.no + ' возвращена в «' + name + '» — отгрузка снята' }); }
+    ops.deliveryUpdate(x, { status: to }, 'Возвращена в «' + name + '»');
   };
 
   ops.setRate = function (r) {
@@ -696,6 +916,11 @@
   };
   function nextCode() { const n = SM.db.products.reduce((m, p) => Math.max(m, +(String(p.code).match(/\d+/) || [0])[0]), 0) + 1; return 'SM-' + String(n).padStart(5, '0'); }
   SM.nextProductCode = nextCode;
+  // артикул производителя: сравнение без регистра, пробелов и дефисов («W 712/75» = «w712/75»)
+  SM.skuKey = (s) => String(s || '').toLowerCase().replace(/[\s-]/g, '');
+  SM.skuOwner = (sku, exceptId) => { const k = SM.skuKey(sku); return k ? SM.db.products.find((p) => p.id !== exceptId && SM.skuKey(p.sku) === k) : null; };
+  // строка поиска товара — одна для списка, подбора в документах и глобального поиска
+  SM.productHay = (p) => [p.code, p.sku, p.sku ? SM.skuKey(p.sku) : '', p.oldCode, p.name, (p.alt || []).join(' '), p.brand, p.maker, SM.category(p.cat).name, Object.values(p.attrs || {}).join(' ')].join(' ').toLowerCase();
   ops.createDoc = function (type, d) {
     const doc = { id: SM.uid('doc'), no: SM.nextNo(SM.DOC_TYPES[type].prefix), type, date: D.todayISO(), at: new Date().toISOString(), by: me().id, saleId: d.saleId || null, clientId: d.clientId || null, from: d.from, to: d.to, note: d.note || '', fields: d.fields || {} };
     SM.db.documents.push(doc);
@@ -711,8 +936,8 @@
     SM.db.deliveries = SM.db.deliveries.filter((d) => d.saleId !== s.id);
     SM.db.documents = SM.db.documents.filter((d) => d.saleId !== s.id);
     SM.db.sales = SM.db.sales.filter((x) => x.id !== s.id);
-    SM.notify('cancel', 'Удалена продажа ' + s.no, SM.client(s.clientId).name + ' · ' + F.cur(SM.saleCalc(s).total, s.cur), '#/history', ['admin', 'head', 'accountant']);
-    SM.log('Удалена продажа', 'sale', null, s.no + ' · ' + SM.client(s.clientId).name);
+    SM.notify('cancel', 'Удалена продажа ' + SM.saleNo(s), SM.client(s.clientId).name + ' · ' + F.cur(SM.saleCalc(s).total, s.cur), '#/history', ['admin', 'head', 'accountant']);
+    SM.log('Удалена продажа', 'sale', null, SM.saleNo(s) + ' · ' + SM.client(s.clientId).name);
     SM.save();
   };
   // что мешает удалить контрагента / товар (связанные операции)

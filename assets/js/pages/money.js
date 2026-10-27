@@ -25,6 +25,11 @@
     const byMethod = {};
     flows.filter((f) => f.kind === 'in').forEach((f) => (byMethod[f.acc] = (byMethod[f.acc] || 0) + SM.toUZS(f.amount, f.cur, f.rate)));
     const parts = Object.entries(byMethod).map(([id, v], i) => ({ name: SM.method(id).name, value: v, color: COLORS[i % COLORS.length] }));
+    // графики: остаток счёта по дням периода; сверху — поступления и расходы по дням и общий остаток (в сумах)
+    const flowsAll = SM.cashFlows().map((f) => ({ at: f.at, v: SM.toUZS(f.amount, f.cur, f.rate), acc: f.acc })).filter((f) => accs.some((a) => a.id === f.acc));
+    const opening = accs.reduce((s, a) => s + SM.toUZS((SM.db.settings.opening || {})[a.id] || 0, a.cur, SM.rate()), 0);
+    const spInc = SM.series(R.from, R.to, flowsAll.filter((f) => f.v > 0)), spOut = SM.series(R.from, R.to, flowsAll.filter((f) => f.v < 0).map((f) => ({ at: f.at, v: -f.v })));
+    const spEnd = rep.map((x) => SM.balanceSeries(x.a.id, R.from, R.to).map((v) => k(x, v))).reduce((s, a) => s.map((v, i) => v + (a[i] || 0)));
     const KIND = { in: ['Приход', 'b-ok'], payout: ['Поставщику', 'b-warn'], refund: ['Возврат', 'b-bad'], expense: ['Расход', 'b-bad'], deposit: ['Внесение', 'b-info'], withdraw: ['Изъятие', 'b-violet'] };
     return html`
       ${UI.pageHead('Касса и банк', 'Остаток на начало, поступления, расходы, оплаты по способам, возвраты и остаток на конец · ' + R.label, html`
@@ -34,12 +39,12 @@
       <div class="row mb-16">${periodBox(R)}</div>
       <div class="grid g-4 keep-2 stagger">
         ${UI.kpi({ label: 'Остаток на начало', icon: 'history', value: F.m(tot.start), count: Math.round(tot.start), unit: 'сум', foot: 'все счета в сумах по курсу ' + F.num(SM.rate()) })}
-        ${UI.kpi({ label: 'Поступления', icon: 'trendUp', value: F.m(tot.inc), count: Math.round(tot.inc), unit: 'сум', foot: html`<span class="ok-t fw-8">приход</span> за период`, cls: 'k-accent' })}
-        ${UI.kpi({ label: 'Расходы и выплаты', icon: 'trendDown', value: F.m(tot.out), count: Math.round(tot.out), unit: 'сум', foot: refunds ? 'в т.ч. возвраты ' + F.short(refunds) : 'возвратов нет' })}
-        ${UI.kpi({ label: 'Остаток на конец', icon: 'wallet', value: F.m(tot.end), count: Math.round(tot.end), unit: 'сум', foot: UI.delta(tot.end, tot.start) })}
+        ${UI.kpi({ label: 'Поступления', icon: 'trendUp', value: F.m(tot.inc), count: Math.round(tot.inc), unit: 'сум', foot: html`<span class="ok-t fw-8">приход</span> за период`, cls: 'k-accent', spark: spInc, sparkColor: '#fff', sparkKey: 'cash:inc' })}
+        ${UI.kpi({ label: 'Расходы и выплаты', icon: 'trendDown', value: F.m(tot.out), count: Math.round(tot.out), unit: 'сум', foot: refunds ? 'в т.ч. возвраты ' + F.short(refunds) : 'возвратов нет', spark: spOut, sparkColor: 'var(--bad)', sparkKey: 'cash:out' })}
+        ${UI.kpi({ label: 'Остаток на конец', icon: 'wallet', value: F.m(tot.end), count: Math.round(tot.end), unit: 'сум', foot: UI.delta(tot.end, tot.start), spark: spEnd, sparkColor: tot.end > tot.start ? 'var(--ok)' : tot.end < tot.start ? 'var(--bad)' : 'var(--text-3)', sparkKey: 'cash:end', sparkFit: true })}
       </div>
-      <div class="grid g-3 mt-16 stagger">${rep.map((x) => html`<div class="card kpi"><div class="k-label">${I(x.a.icon)}${x.a.name}</div><div class="k-value">${accAmt(x.end, x.a.cur)}</div>
-        <div class="k-foot">начало ${accAmt(x.start, x.a.cur)} · <span class="ok-t">+${accAmt(x.inc, x.a.cur)}</span> · <span class="bad-t">−${accAmt(x.out, x.a.cur)}</span></div></div>`)}</div>
+      <div class="grid g-3 mt-16 stagger">${rep.map((x) => html`<div class="card kpi acc-tile has-spark"><div class="k-label">${I(x.a.icon)}${x.a.name}</div><div class="k-value">${accAmt(x.end, x.a.cur)}</div>
+        <div class="k-foot">начало ${accAmt(x.start, x.a.cur)} · <span class="ok-t">+${accAmt(x.inc, x.a.cur)}</span> · <span class="bad-t">−${accAmt(x.out, x.a.cur)}</span></div>${UI.spark(SM.balanceSeries(x.a.id, R.from, R.to), x.end > x.start ? 'var(--ok)' : x.end < x.start ? 'var(--bad)' : 'var(--text-3)', 'cash:' + x.a.id, true)}</div>`)}</div>
       <div class="grid g-21 mt-16 stagger">
         <div class="card"><div class="card-h"><h3>${I('history')}Движение денег</h3><span class="sub">${flows.length} операций</span></div><div class="card-b">${flows.length ? html`<div class="table-wrap"><table class="table compact"><thead><tr><th>Время</th><th>Операция</th><th>Счёт</th><th class="r">Сумма</th></tr></thead><tbody>
           ${flows.map((f) => html`<tr ${f.saleId ? raw(`class="click" data-act="open-sale" data-id="${f.saleId}"`) : ''}><td class="nowrap">${F.dt(f.at)}</td><td><span class="cell-title">${f.title}</span><span class="cell-sub">${f.who}</span></td><td>${UI.badge(KIND[f.kind])} <span class="fs-12 muted">${SM.account(f.acc).name}</span></td><td class="r">${UI.signed(f.amount, f.cur)}</td></tr>`)}</tbody></table></div>` : UI.empty('Операций нет', 'за выбранный период')}</div></div>
@@ -72,7 +77,7 @@
     const R = range(r, 'month');
     const can = SM.flag('confirmPay');
     const payRow = (p, actions) => { const s = p.saleId ? SM.db.sales.find((x) => x.id === p.saleId) : null; return html`<tr>
-      <td class="nowrap">${F.dt(p.at)}</td><td><span class="cell-title">${SM.client(p.clientId).name}</span><span class="cell-sub">${s ? html`<a href="#" data-act="open-sale" data-id="${s.id}">${s.no}</a>` : p.dir === 'out' ? 'оплата поставщику' : 'погашение долга'}${p.note ? ' · ' + p.note : ''}</span></td>
+      <td class="nowrap">${F.dt(p.at)}</td><td><span class="cell-title">${SM.client(p.clientId).name}</span><span class="cell-sub">${s ? html`<a href="#" data-act="open-sale" data-id="${s.id}">${SM.saleNo(s)}</a>` : p.dir === 'out' ? 'оплата поставщику' : 'погашение долга'}${p.note ? ' · ' + p.note : ''}</span></td>
       <td>${I(SM.method(p.method).icon, 'icon-sm')} ${SM.method(p.method).name}</td><td class="r nowrap"><b>${p.dir === 'out' ? '−' : ''}${F.cur(p.amount, p.cur)}</b>${p.cur === 'USD' ? html`<span class="cell-sub">≈ ${F.cur(p.amount * p.rate)}</span>` : ''}</td>
       <td>${SM.user_(p.by).name}</td><td class="nowrap">${actions && can ? html`<button class="btn btn-ok btn-sm" data-ok="${p.id}">${I('check')}Подтвердить</button> <button class="btn btn-danger btn-sm" data-no="${p.id}">${I('x')}Отклонить</button>` : UI.badge(SM.PAY_STATUS[p.status])}</td></tr>`; };
     const head = html`<thead><tr><th>Создана</th><th>Контрагент</th><th>Способ</th><th class="r">Сумма</th><th>Кто внёс</th><th></th></tr></thead>`;
@@ -92,8 +97,8 @@
       body = html`<div class="row mb-16">${periodBox(R)}</div>
         <div class="note-box mb-16">${I('info')}<div>Курс фиксируется в каждой операции и не меняется при обновлении справочника курсов (ТЗ 10). Ниже — операции в долларах и их сумовой эквивалент по курсу операции.</div></div>
         <div class="table-wrap"><table class="table"><thead><tr><th>Дата</th><th>Операция</th><th>Контрагент</th><th class="r">Сумма, $</th><th class="r">Курс</th><th class="r">В сумах</th></tr></thead><tbody>
-          ${usdSales.map((s) => { const t = SM.saleCalc(s).total; return html`<tr class="click" data-act="open-sale" data-id="${s.id}"><td>${F.date(s.date)}</td><td>Продажа ${s.no}</td><td>${SM.client(s.clientId).name}</td><td class="r">${F.usd(t)}</td><td class="r">${F.num(s.rate)}</td><td class="r fw-8">${F.m(t * s.rate)}</td></tr>`; })}
-          ${usdPays.map((p) => { const s = SM.db.sales.find((x) => x.id === p.saleId); const usd = SM.conv(p.amount, p.cur, 'USD', p.rate); return html`<tr><td>${F.date(p.at)}</td><td>Оплата ${s ? s.no : ''} · ${SM.method(p.method).name}</td><td>${SM.client(p.clientId).name}</td><td class="r">${F.usd(usd)}</td><td class="r">${F.num(p.rate)}</td><td class="r fw-8">${F.m(SM.toUZS(p.amount, p.cur, p.rate))}</td></tr>`; })}
+          ${usdSales.map((s) => { const t = SM.saleCalc(s).total; return html`<tr class="click" data-act="open-sale" data-id="${s.id}"><td>${F.date(s.date)}</td><td>Продажа ${SM.saleNo(s)}</td><td>${SM.client(s.clientId).name}</td><td class="r">${F.usd(t)}</td><td class="r">${F.num(s.rate)}</td><td class="r fw-8">${F.m(t * s.rate)}</td></tr>`; })}
+          ${usdPays.map((p) => { const s = SM.db.sales.find((x) => x.id === p.saleId); const usd = SM.conv(p.amount, p.cur, 'USD', p.rate); return html`<tr><td>${F.date(p.at)}</td><td>Оплата ${s ? SM.saleNo(s) : ''} · ${SM.method(p.method).name}</td><td>${SM.client(p.clientId).name}</td><td class="r">${F.usd(usd)}</td><td class="r">${F.num(p.rate)}</td><td class="r fw-8">${F.m(SM.toUZS(p.amount, p.cur, p.rate))}</td></tr>`; })}
           ${usdRc.map((x) => { const t = SM.receiptCalc(x).total; return html`<tr class="click" data-href="#/receipts/${x.id}"><td>${F.date(x.date)}</td><td>Поступление ${x.no}</td><td>${SM.client(x.supplierId).name}</td><td class="r">${F.usd(t)}</td><td class="r">${F.num(x.rate)}</td><td class="r fw-8">${F.m(t * x.rate)}</td></tr>`; })}
         </tbody></table></div>`;
     } else {
@@ -108,7 +113,7 @@
           <div class="cash-acc"><span>${I('inbox')}НДС в поступлениях (зачёт)</span><b>${F.cur(inVat)}</b><div class="fs-12 muted fw-7">${rcs.length} документов</div></div>
           <div class="cash-acc"><span>${I('percent')}К уплате</span><b class="${outVat - inVat > 0 ? 'bad-t' : 'ok-t'}">${F.cur(outVat - inVat)}</b><div class="fs-12 muted fw-7">ставка ${SM.vatCfg().rate}%, ${SM.vatCfg().mode === 'top' ? 'сверху' : 'в т.ч.'}</div></div></div>
         <div class="section-t">Продажи с НДС</div>
-        ${sales.length ? html`<div class="table-wrap"><table class="table compact"><thead><tr><th>Продажа</th><th>Клиент</th><th class="r">Без НДС</th><th class="r">НДС</th><th class="r">Итого</th></tr></thead><tbody>${sales.map((s) => { const c = SM.saleCalc(s); return html`<tr class="click" data-act="open-sale" data-id="${s.id}"><td>${s.no} · ${F.date(s.date)}</td><td>${SM.client(s.clientId).name}</td><td class="r">${F.cur(c.net, s.cur)}</td><td class="r fw-7">${F.cur(c.vat, s.cur)}</td><td class="r fw-8">${F.cur(c.total, s.cur)}</td></tr>`; })}</tbody></table></div>` : UI.empty('Нет продаж с НДС', 'за выбранный период')}
+        ${sales.length ? html`<div class="table-wrap"><table class="table compact"><thead><tr><th>Продажа</th><th>Клиент</th><th class="r">Без НДС</th><th class="r">НДС</th><th class="r">Итого</th></tr></thead><tbody>${sales.map((s) => { const c = SM.saleCalc(s); return html`<tr class="click" data-act="open-sale" data-id="${s.id}"><td>${SM.saleNo(s)} · ${F.date(s.date)}</td><td>${SM.client(s.clientId).name}</td><td class="r">${F.cur(c.net, s.cur)}</td><td class="r fw-7">${F.cur(c.vat, s.cur)}</td><td class="r fw-8">${F.cur(c.total, s.cur)}</td></tr>`; })}</tbody></table></div>` : UI.empty('Нет продаж с НДС', 'за выбранный период')}
         <p class="fs-12 muted mt-12">Окончательные правила применения курсов и НДС согласовываются с Заказчиком до разработки расчётной части (ТЗ 10).</p>`;
     }
     const confirmedToday = SM.db.payments.filter((p) => p.status === 'confirmed' && D.dayOf(p.confirmedAt || p.at) === D.todayISO()).length;
@@ -157,7 +162,7 @@
         <div class="field"><label>Касса или счёт</label><select class="select" name="account">${UI.options(SM.ACCOUNTS.map((a) => [a.id, a.name]), 'cash_uzs')}</select></div>
         <div class="field"><label>Дата</label><input class="input" type="date" name="date" value="${D.todayISO()}"></div>
         <div class="field"><label>Магазин или склад</label><select class="select" name="pointId">${UI.options(UI.pointOptions(), '', 'Не указан')}</select></div>
-        <div class="field full"><label>Чек или документ</label><input class="input" type="file" name="file" style="padding-top:10px"></div></form>`,
+        <div class="field full"><label>Чек или документ</label>${UI.fileField('file', { label: 'Прикрепить чек' })}</div></form>`,
       foot: html`<button class="btn btn-ghost" data-close>Отмена</button><button class="btn btn-primary" data-ok>${I('check')}Сохранить</button>` });
     const f = m.querySelector('form');
     const sc = () => { const usd = SM.account(f.account.value).cur === 'USD'; m.querySelector('[data-cur]').textContent = usd ? '$' : 'сум'; f.amount.dataset.dec = usd ? 2 : 0; };

@@ -9,22 +9,62 @@
   const I = UI.icon;
 
   /* ---------- Пользователи ---------- */
+  // Логин из Ф.И.О.: «Каримов Азиз Рустамович» → karimov.a (кириллица как в узбекской латинице: ж→j, х→h; занятый — с цифрой)
+  const TR = { а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'yo', ж: 'j', з: 'z', и: 'i', й: 'y', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'h', ц: 'ts', ч: 'ch', ш: 'sh', щ: 'sch', ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya', ў: 'o', қ: 'q', ғ: 'g', ҳ: 'h' };
+  const latin = (w) => [...w.toLowerCase()].map((c) => (c in TR ? TR[c] : c)).join('').replace(/[^a-z0-9]/g, '');
+  function loginFromName(name) {
+    const w = String(name || '').split(/\s+/).map(latin).filter(Boolean);
+    if (!w.length) return '';
+    let base = w[0] + (w[1] ? '.' + w[1][0] : '');
+    if (base.length < 3) base = (base + 'user').slice(0, 3);
+    const busy = (l) => SM.db.users.some((x) => x.login.toLowerCase() === l);
+    let l = base, n = 2;
+    while (busy(l)) l = base + n++;
+    return l;
+  }
+  // Пароль: 10 знаков без похожих (0/O, 1/l/I), обязательно буквы и цифры
+  function genPass() {
+    const A = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    for (;;) {
+      const p = [...crypto.getRandomValues(new Uint32Array(10))].map((x) => A[x % A.length]).join('');
+      if (/[a-z]/i.test(p) && /\d/.test(p)) return p;
+    }
+  }
+  function credsCard(x, pass) {
+    const m = UI.modal({ title: 'Данные для входа', sub: 'Передайте сотруднику. Пароль потом не посмотреть — только задать новый', size: 'narrow',
+      body: html`<div class="creds" data-creds><div><span>Логин</span><b class="mono">${x.login}</b></div><div><span>Пароль</span><b class="mono">${pass}</b></div></div>`,
+      foot: html`<button class="btn btn-ghost" data-copy>${I('copy')}Скопировать</button><button class="btn btn-primary" data-close>${I('check')}Готово</button>` });
+    m.querySelector('[data-copy]').onclick = async () => {
+      try { await navigator.clipboard.writeText('Логин: ' + x.login + '\nПароль: ' + pass); UI.toast('Скопировано', 'Логин и пароль'); }
+      catch (e) { UI.toast('Не удалось скопировать', 'Выделите и скопируйте вручную', 'warn'); }
+    };
+  }
   function userForm(u) {
     const isNew = !u;
     u = u || { role: 'seller', points: [], active: true };
-    const m = UI.modal({ title: isNew ? 'Новый пользователь' : u.name, sub: isNew ? 'Логин и пароль сотрудник вводит на странице входа' : 'Логин: ' + u.login, size: 'wide',
+    const lockPass = !isNew && u.role === 'admin'; // пароль администратора здесь не меняется (Алексей 26.10)
+    const m = UI.modal({ title: isNew ? 'Новый пользователь' : u.name, sub: isNew ? 'Логин и пароль заполняются сами — после сохранения покажем их, чтобы передать сотруднику' : 'Логин: ' + u.login, size: 'wide',
       body: html`<form class="form-grid" autocomplete="off">
         <div class="field"><label>Ф.И.О. <span class="req">*</span></label><input class="input" name="name" value="${u.name || ''}" autofocus></div>
         <div class="field"><label>Телефон</label><input class="input" name="phone" value="${u.phone || ''}"></div>
-        <div class="field"><label>Логин <span class="req">*</span></label><input class="input" name="login" value="${u.login || ''}" ${isNew ? '' : 'readonly'} autocomplete="off"></div>
-        <div class="field"><label>${isNew ? 'Пароль' : 'Новый пароль'} ${isNew ? html`<span class="req">*</span>` : ''}</label><input class="input" type="password" name="pass" autocomplete="new-password" placeholder="${isNew ? 'не короче 6 символов' : 'оставьте пустым, чтобы не менять'}"></div>
+        <div class="field"><label>Логин <span class="req">*</span></label><input class="input" name="login" value="${u.login || ''}" ${isNew ? '' : 'readonly'} autocomplete="off" spellcheck="false"></div>
+        ${lockPass ? html`<div class="field"><label>Пароль</label><input class="input" type="password" name="pass" value="" placeholder="••••••••" disabled><span class="hint">Пароль администратора не меняется</span></div>`
+          : html`<div class="field"><label>${isNew ? 'Пароль' : 'Новый пароль'} ${isNew ? html`<span class="req">*</span>` : ''}</label><div class="input-act"><input class="input" type="${isNew ? 'text' : 'password'}" name="pass" autocomplete="new-password" spellcheck="false" value="${isNew ? genPass() : ''}" placeholder="${isNew ? 'не короче 6 символов' : 'оставьте пустым, чтобы не менять'}"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-gen title="Сгенерировать пароль" aria-label="Сгенерировать пароль">${I('refresh')}</button></div></div>`}
         <div class="field full"><label>Роль</label><select class="select" name="role">${UI.options(Object.entries(SM.ROLES).map(([k, v]) => [k, v.title + ' — ' + v.desc]), u.role)}</select></div>
         <div class="field full"><label>Доступные магазины и склады</label><div class="choice">${SM.db.points.map((p) => html`<label><input type="checkbox" name="pt_${p.id}" ${u.points.includes(p.id) ? 'checked' : ''}><span>${I(p.type === 'warehouse' ? 'warehouse' : 'store')}${p.name}</span></label>`)}</div><span class="hint">Для склада и продавцов: видят и работают только с выбранными точками. Пусто — все точки.</span></div>
         <label class="switch full"><input type="checkbox" name="active" ${u.active ? 'checked' : ''}><i></i>Учётная запись активна</label></form>`,
       foot: html`<button class="btn btn-ghost" data-close>Отмена</button><button class="btn btn-primary" data-ok>${I('check')}Сохранить</button>` });
     const f = m.querySelector('form');
+    const passIn = f.elements.pass, loginIn = f.elements.login;
+    if (!lockPass) m.querySelector('[data-gen]').onclick = () => { passIn.type = 'text'; passIn.value = genPass(); passIn.closest('.field').classList.remove('is-invalid'); };
+    if (isNew) {
+      let auto = true; // логин собирается из Ф.И.О., пока его не поменяли руками
+      loginIn.addEventListener('input', () => { auto = !loginIn.value.trim(); });
+      f.elements.name.addEventListener('input', () => { if (auto) loginIn.value = loginFromName(f.elements.name.value); });
+    }
     m.querySelector('[data-ok]').onclick = async () => {
       const d = UI.formData(f);
+      if (lockPass) d.pass = '';
       if (!d.name) return UI.invalid(f, 'name', 'Укажите Ф.И.О.');
       if (isNew && !/^[a-z0-9._-]{3,}$/i.test(d.login)) return UI.invalid(f, 'login', 'Латиница и цифры, не короче 3 символов');
       if (isNew && SM.db.users.some((x) => x.login.toLowerCase() === d.login.toLowerCase())) return UI.invalid(f, 'login', 'Такой логин уже есть');
@@ -36,7 +76,8 @@
       if (d.pass) x.passHash = await SM.passHash(x.login, d.pass);
       if (isNew) SM.db.users.push(x);
       SM.log(isNew ? 'Создан пользователь' : 'Изменён пользователь', 'user', x.id, x.name + ' · ' + SM.ROLES[x.role].title + (d.pass && !isNew ? ' · пароль изменён' : ''));
-      SM.save(); UI.closeTop(); UI.toast('Сохранено', x.name); SM.refresh();
+      SM.save(); UI.closeTop(); SM.refresh();
+      if (d.pass) credsCard(x, d.pass); else UI.toast('Сохранено', x.name);
     };
   }
   /* ---------- Роли и права: выбрать роль → для каждого раздела один переключатель уровня (без тяжёлых списков) ---------- */
@@ -54,7 +95,7 @@
       const keys = Object.keys(SM.ROLES), rk = roleKey(r), role = SM.db.roles[rk];
       const locked = !edit || rk === 'admin';
       const groups = [];
-      SM.SECTIONS.forEach((s) => { let g = groups.find((x) => x.name === s.group); if (!g) groups.push((g = { name: s.group, items: [] })); g.items.push(s); });
+      SM.SECTIONS.filter((s) => !s.permOf).forEach((s) => { let g = groups.find((x) => x.name === s.group); if (!g) groups.push((g = { name: s.group, items: [] })); g.items.push(s); });
       return html`
         ${UI.pageHead('Пользователи и роли', 'Выберите роль и отметьте, что ей доступно — изменения сохраняются сразу', edit ? html`<button class="btn btn-ghost" data-x="reset-roles">${I('undo')}Вернуть как в ТЗ</button>` : '')}
         ${UI.tabs([['users', 'Пользователи', SM.db.users.length], ['roles', 'Роли и права']], tab)}
@@ -62,7 +103,7 @@
         <div class="note-box mb-16">${I('info')}<div><b>${SM.ROLES[rk].title}.</b> ${SM.ROLES[rk].desc}${rk === 'admin' ? ' · у администратора всегда полный доступ, его права не меняются' : ''}</div></div>
         <div class="grid g-21">
           <div class="card"><div class="card-h"><h3>${I('layers')}Доступ к разделам</h3><span class="sub">Нет · Просмотр · Изменение · Полный</span></div><div class="card-b">
-            ${groups.map((g) => html`<div class="section-t">${g.name}</div>${g.items.map((s) => { const lv = role.perms[s.key] || 0; return html`<div class="perm-row"><span class="tile-ic">${I(s.icon)}</span><div class="grow"><b class="fs-13">${s.title}</b></div><div class="lv" role="group" aria-label="${s.title}">${LV.map((t, i) => html`<button type="button" class="${lv === i ? 'on' : ''}" data-lv="${i}" data-sec="${s.key}" ${locked ? raw('disabled') : ''}>${t}</button>`)}</div></div>`; })}`)}
+            ${groups.map((g) => html`<div class="section-t">${g.name}</div>${g.items.map((s) => { const lv = role.perms[s.key] || 0; return html`<div class="perm-row"><span class="tile-ic">${I(s.icon)}</span><div class="grow"><b class="fs-13">${s.title}</b>${s.tabOf ? html`<span class="cell-sub">Вкладка в «${SM.navTitle(s.tabOf)}»</span>` : ''}</div><div class="lv" role="group" aria-label="${s.title}">${LV.map((t, i) => html`<button type="button" class="${lv === i ? 'on' : ''}" data-lv="${i}" data-sec="${s.key}" ${locked ? raw('disabled') : ''}>${t}</button>`)}</div></div>`; })}`)}
           </div></div>
           <div class="stack">
             <div class="card"><div class="card-h"><h3>${I('key')}Права на действия</h3></div><div class="card-b"><div class="stack" style="gap:16px">
@@ -117,7 +158,7 @@
   }
 
   /* ---------- История операций ---------- */
-  const ENT = { sale: 'Продажа', payment: 'Оплата', receipt: 'Поступление', transfer: 'Перемещение', product: 'Товар', client: 'Контрагент', expense: 'Расход', delivery: 'Доставка', rate: 'Курс', user: 'Пользователь', doc: 'Документ', stock: 'Остатки', cash: 'Касса', settings: 'Настройки' };
+  const ENT = { contract: 'Договор', sale: 'Продажа', payment: 'Оплата', receipt: 'Поступление', transfer: 'Перемещение', product: 'Товар', client: 'Контрагент', expense: 'Расход', delivery: 'Доставка', rate: 'Курс', user: 'Пользователь', doc: 'Документ', stock: 'Остатки', cash: 'Касса', settings: 'Настройки' };
   function historyPage(r) {
     const q = (r.q.q || '').toLowerCase(), u = r.q.u || '', e = r.q.e || '';
     const R = SM.periodRange(r.q.p || 'all');
